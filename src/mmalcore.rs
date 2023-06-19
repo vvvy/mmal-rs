@@ -1,0 +1,616 @@
+use std::{ptr::NonNull, mem::MaybeUninit, marker::{PhantomData, PhantomPinned}, ffi::c_char, sync::Once, pin::Pin};
+
+use mmal_sys as ffi;
+
+
+use super::*;
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------
+
+
+/// Common companion trait for all MMAL object types
+pub trait Entity {
+    fn name() -> &'static str;
+}
+
+/// Component companion trait
+pub trait ComponentEntity: Entity { }
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+/// MMAL Component Handle
+/// 
+/// This is essentially a C-stype pointer with a companion type attached. Note that cloning the handle
+/// effectivelly copies the pointer and increases refcount of the underlying C struct. 
+pub struct ComponentHandle<E> {
+    c: NonNull<ffi::MMAL_COMPONENT_T>,
+    t: PhantomData<E>
+}
+
+impl<E: ComponentEntity> ComponentHandle<E> {
+    /// Creates a new component instance and returns a handle to it
+    pub(super) unsafe fn create_from(component_name: *const c_char) -> Result<Self> {
+        let mut ptr = MaybeUninit::uninit();
+        let status = ffi::mmal_component_create(component_name, ptr.as_mut_ptr());
+        cst(status, msgf("Unable to create component", E::name()))?;
+        let ptr: *mut ffi::MMAL_COMPONENT_T = ptr.assume_init();
+        let c = NonNull::new(ptr).unwrap();
+        Ok(Self { c, t: PhantomData })
+    }
+
+    pub fn enable(&self) -> Result<()> {
+        unsafe {
+            if self.c.as_ref().is_enabled == 0 {
+                let status = ffi::mmal_component_enable(self.c.as_ptr());
+                cst(status, msgf("Unable to enable", E::name()))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn disable(&self) -> Result<()> {
+        unsafe {
+            if self.c.as_ref().is_enabled != 0 {
+                let status = ffi::mmal_component_disable(self.c.as_ptr());
+                cst(status, msgf("Unable to disable", E::name()))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) unsafe fn control_port(&self) -> *mut ffi::MMAL_PORT_T { self.c.as_ref().control }
+    pub(super) unsafe fn output_port_n(&self, n: isize) -> *mut ffi::MMAL_PORT_T { 
+        assert!(n < self.c.as_ref().output_num as isize, "invalid output port {} (total ports {})", n, self.c.as_ref().output_num);
+        *self.c.as_ref().output.offset(n)
+    }
+    pub(super) unsafe fn input_port_n(&self, n: isize) -> *mut ffi::MMAL_PORT_T { 
+        assert!(n < self.c.as_ref().input_num as isize, "invalid input port {} (total ports {})", n, self.c.as_ref().input_num);
+        *self.c.as_ref().input.offset(n) 
+    }
+
+    /*pub fn configure<'p>(&self, settings: impl Iterator<Item=&'p E::ComponentParam>) -> Result<()> {
+        unsafe { E::configure(self, settings) }
+    }
+
+    pub fn read_config<'p>(&self, settings: impl Iterator<Item=&'p mut E::ComponentParam>) -> Result<()> {
+        unsafe { E::read_config(self, settings) }
+    }*/
+}
+
+impl<E> Drop for ComponentHandle<E> {
+    fn drop(&mut self) {
+        unsafe { ffi::mmal_component_destroy(self.c.as_ptr()); }
+    }
+}
+
+impl<E> Clone for ComponentHandle<E> {
+    fn clone(&self) -> Self {
+        unsafe { ffi::mmal_component_acquire(self.c.as_ptr()) }
+        Self { c: self.c.clone(), t: self.t.clone() }
+    }
+}
+
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+pub struct NullSinkEntity;
+
+impl Entity for NullSinkEntity {
+    fn name() -> &'static str { "null_sink" }
+}
+
+impl ComponentEntity for NullSinkEntity { }
+
+pub type NullSinkComponentHandle = ComponentHandle<NullSinkEntity>;
+
+
+impl NullSinkComponentHandle {
+    pub fn create() -> Result<Self> {
+        let component_name: *const c_char = ffi::MMAL_COMPONENT_NULL_SINK.as_ptr() as *const std::ffi::c_char;
+        unsafe {
+            Self::create_from(component_name)
+        }
+    }
+
+    //pub fn input_port(&self)-> *mut ffi::MMAL_PORT_T { unsafe { self.input_port_n(DEFAULT_PORT_OFFSET) } }
+}
+
+pub struct NullSinkInputPort;
+impl ComponentPort for NullSinkInputPort {
+    type E = NullSinkEntity;
+
+    unsafe fn get_port(component: &ComponentHandle<Self::E>) -> *mut ffi::MMAL_PORT_T {
+        component.input_port_n(DEFAULT_PORT_OFFSET)
+    }
+
+    fn name() -> &'static str { "null sink input port" }    
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+pub struct ConnectionHandle<PS, PT> {
+    c: NonNull<ffi::MMAL_CONNECTION_T>,
+    source: PhantomData<PS>,
+    target: PhantomData<PT>,
+}
+
+impl<PS: ComponentPort, PT: ComponentPort> ConnectionHandle<PS, PT> {
+    pub fn create(source: &ComponentHandle<PS::E>, target: &ComponentHandle<PT::E>) -> Result<Self> {
+        let c = unsafe {     
+            let mut connection_ptr = MaybeUninit::uninit();
+            let status = ffi::mmal_connection_create(
+                connection_ptr.as_mut_ptr(),
+                PS::get_port(source),
+                PT::get_port(target),
+                ffi::MMAL_CONNECTION_FLAG_TUNNELLING
+                    | ffi::MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT,
+            );
+            cst(status, || format!("Unable to create connection {}->{}", PS::name(), PT::name()))?;
+            let connection_ptr: *mut ffi::MMAL_CONNECTION_T = connection_ptr.assume_init();
+            NonNull::new(connection_ptr).unwrap()         
+        };
+        Ok(Self{ c, source: PhantomData, target: PhantomData })
+    }
+
+    pub fn enable(&self) -> Result<()> {
+        let status = unsafe { ffi::mmal_connection_enable(self.c.as_ptr()) };
+        cst(status, || format!("Unable to enable connection {}->{}", PS::name(), PT::name()))?;
+        Ok(())
+    }
+}
+
+impl<PS, PT> Drop for ConnectionHandle<PS, PT> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::mmal_connection_destroy(self.c.as_ptr());
+        }
+    }
+}
+
+impl<PS, PT> Clone for ConnectionHandle<PS, PT> {
+    fn clone(&self) -> Self {
+        unsafe { ffi::mmal_connection_acquire(self.c.as_ptr()) }
+        Self { c: self.c.clone(), source: self.source.clone(), target: self.target.clone() }
+    }
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+
+
+pub struct BufferRef {
+    p: NonNull<ffi::MMAL_BUFFER_HEADER_T>,
+}
+
+impl BufferRef {
+    pub const FLAG_EOS: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_EOS;  /// MMAL_BUFFER_HEADER_FLAG_EOS: u32 = 1;
+    pub const FLAG_FRAME_START: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FRAME_START;  /// MMAL_BUFFER_HEADER_FLAG_FRAME_START: u32 = 2;
+    pub const FLAG_FRAME_END: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FRAME_END;  /// MMAL_BUFFER_HEADER_FLAG_FRAME_END: u32 = 4;
+    pub const FLAG_FRAME: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FRAME;  /// MMAL_BUFFER_HEADER_FLAG_FRAME: u32 = 6;
+    pub const FLAG_KEYFRAME: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_KEYFRAME;  /// MMAL_BUFFER_HEADER_FLAG_KEYFRAME: u32 = 8;
+    pub const FLAG_DISCONTINUITY: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_DISCONTINUITY;  /// MMAL_BUFFER_HEADER_FLAG_DISCONTINUITY: u32 = 16;
+    pub const FLAG_CONFIG: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_CONFIG;  /// MMAL_BUFFER_HEADER_FLAG_CONFIG: u32 = 32;
+    pub const FLAG_ENCRYPTED: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_ENCRYPTED;  /// MMAL_BUFFER_HEADER_FLAG_ENCRYPTED: u32 = 64;
+    pub const FLAG_CODECSIDEINFO: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO;  /// MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO: u32 = 128;
+    pub const FLAGS_SNAPSHOT: u32 = ffi::MMAL_BUFFER_HEADER_FLAGS_SNAPSHOT;  /// MMAL_BUFFER_HEADER_FLAGS_SNAPSHOT: u32 = 256;
+    pub const FLAG_CORRUPTED: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_CORRUPTED;  /// MMAL_BUFFER_HEADER_FLAG_CORRUPTED: u32 = 512;
+    pub const FLAG_TRANSMISSION_FAILED: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;  /// MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED: u32 = 1024;
+    pub const FLAG_DECODEONLY: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_DECODEONLY;  /// MMAL_BUFFER_HEADER_FLAG_DECODEONLY: u32 = 2048;
+    pub const FLAG_NAL_END: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_NAL_END;  /// MMAL_BUFFER_HEADER_FLAG_NAL_END: u32 = 4096;
+    pub const FLAG_USER0: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_USER0;  /// MMAL_BUFFER_HEADER_FLAG_USER0: u32 = 268435456;
+    pub const FLAG_USER1: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_USER1;  /// MMAL_BUFFER_HEADER_FLAG_USER1: u32 = 536870912;
+    pub const FLAG_USER2: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_USER2;  /// MMAL_BUFFER_HEADER_FLAG_USER2: u32 = 1073741824;
+    pub const FLAG_USER3: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_USER3;  /// MMAL_BUFFER_HEADER_FLAG_USER3: u32 = 2147483648;
+    pub const FLAG_FORMAT_SPECIFIC_START_BIT: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FORMAT_SPECIFIC_START_BIT;  /// MMAL_BUFFER_HEADER_FLAG_FORMAT_SPECIFIC_START_BIT: u32 = 16;
+    pub const FLAG_FORMAT_SPECIFIC_START: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FORMAT_SPECIFIC_START;  /// MMAL_BUFFER_HEADER_FLAG_FORMAT_SPECIFIC_START: u32 = 65536;
+    pub const VIDEO_FLAG_INTERLACED: u32 = ffi::MMAL_BUFFER_HEADER_VIDEO_FLAG_INTERLACED;  /// MMAL_BUFFER_HEADER_VIDEO_FLAG_INTERLACED: u32 = 65536;
+    pub const VIDEO_FLAG_TOP_FIELD_FIRST: u32 = ffi::MMAL_BUFFER_HEADER_VIDEO_FLAG_TOP_FIELD_FIRST;  /// MMAL_BUFFER_HEADER_VIDEO_FLAG_TOP_FIELD_FIRST: u32 = 131072;
+    pub const VIDEO_FLAG_DISPLAY_EXTERNAL: u32 = ffi::MMAL_BUFFER_HEADER_VIDEO_FLAG_DISPLAY_EXTERNAL;  /// MMAL_BUFFER_HEADER_VIDEO_FLAG_DISPLAY_EXTERNAL: u32 = 524288;
+    pub const VIDEO_FLAG_PROTECTED: u32 = ffi::MMAL_BUFFER_HEADER_VIDEO_FLAG_PROTECTED;  /// MMAL_BUFFER_HEADER_VIDEO_FLAG_PROTECTED: u32 = 1048576;
+    pub const VIDEO_FLAG_COLUMN_LOG2_SHIFT: u32 = ffi::MMAL_BUFFER_HEADER_VIDEO_FLAG_COLUMN_LOG2_SHIFT;  /// MMAL_BUFFER_HEADER_VIDEO_FLAG_COLUMN_LOG2_SHIFT: u32 = 24;
+    pub const VIDEO_FLAG_COLUMN_LOG2_MASK: u32 = ffi::MMAL_BUFFER_HEADER_VIDEO_FLAG_COLUMN_LOG2_MASK;  /// MMAL_BUFFER_HEADER_VIDEO_FLAG_COLUMN_LOG2_MASK: u32 = 251658240;
+
+    pub const FLAG_TERMINAL_FRAME: u32 = Self::FLAG_FRAME_END | Self::FLAG_TRANSMISSION_FAILED;
+
+    /// pub fn flags(&self) -> u32 { unsafe { self.p.as_ref().flags } }
+    /// pub fn check_flags(&self, mask: u32) -> bool { unsafe { self.p.as_ref().flags & mask != 0 } }
+    /// pub fn is_terminal_frame(&self) -> bool { self.check_flags(Self::FLAG_TERMINAL_FRAME) }
+
+    /// Returns (is_consumed, is_terminal). If !is_consumed, should be pushed back to the queue. If is_rerminal, expect no more frames
+    pub fn do_locked(&self, mut f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<(bool, bool)> {
+        unsafe {
+            let flags = self.p.as_ref().flags;
+            cst(ffi::mmal_buffer_header_mem_lock(self.p.as_ptr()), || "could not lock buffer".to_owned())?;
+            let b = self.p.as_ref();
+            let rv = f(
+                flags,
+                std::slice::from_raw_parts(b.data.add(b.offset as usize), b.length as usize)
+            );
+            ffi::mmal_buffer_header_mem_unlock(self.p.as_ptr());
+            Ok((rv?, flags & Self::FLAG_TERMINAL_FRAME != 0))
+        }
+    }
+    
+}
+
+impl Clone for BufferRef {
+    fn clone(&self) -> Self {
+        unsafe { ffi::mmal_buffer_header_acquire(self.p.as_ptr()); }
+        Self { p: self.p.clone() }
+    }
+}
+
+impl Drop for BufferRef {
+    fn drop(&mut self) {
+        unsafe { ffi::mmal_buffer_header_release(self.p.as_ptr()) }
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+/*
+pub struct PoolHandle {
+    p: NonNull<ffi::MMAL_POOL_T>,
+}
+
+impl PoolHandle {
+    pub fn create(headers: u32, payload_size: u32) -> Result<Self> {
+        let pool_ptr = unsafe { ffi::mmal_pool_create(headers, payload_size) };
+        //TODO proper error
+        let p = NonNull::new(pool_ptr)
+            .ok_or_else(|| MmalError::with_status("Unable to create pool".to_owned(), 0))?;
+        Ok(Self { p })
+    }
+
+    unsafe fn get_queue(&self) -> *mut ffi::MMAL_QUEUE_T {
+        self.p.as_ref().queue
+    }
+
+    pub fn get_buffer(&self) -> Option<BufferRef> {
+        unsafe {
+            let buffer_ptr = ffi::mmal_queue_get(self.p.as_ref().queue);
+            let p = NonNull::new(buffer_ptr)?;
+            Some(BufferRef { p })
+        }
+    }
+}
+
+impl Drop for PoolHandle {
+    fn drop(&mut self) {
+        unsafe { ffi::mmal_pool_destroy(self.p.as_ptr()) }
+    }
+}
+*/
+//------------------------------------------------------------------------------------------------------------------------------
+
+
+pub struct PortPoolHandle<P: ComponentPort> {
+    c: ComponentHandle<P::E>,
+    port: NonNull<ffi::MMAL_PORT_T>,
+    pool: NonNull<ffi::MMAL_POOL_T>
+}
+
+impl<P: ComponentPort> PortPoolHandle<P> {
+    pub fn create(c: ComponentHandle<P::E>) -> Result<Self> {
+        unsafe { 
+            let port = P::get_port(&c);
+
+            let port = NonNull::new(port)
+                .ok_or_else(|| MmalError::no_status("Unable to get port".to_owned()))?;
+
+            // TODO make up (*port).buffer_num, (*port).buffer_size here
+            let pool = ffi::mmal_port_pool_create(
+                port.as_ptr(),
+                port.as_ref().buffer_num, 
+                port.as_ref().buffer_size
+            );
+            let pool = NonNull::new(pool)
+                .ok_or_else(|| MmalError::no_status("Unable to create pool".to_owned()))?;
+            
+            Ok(Self { c, port, pool })          
+        }
+    }
+
+    pub fn get_component(&self) -> &ComponentHandle<P::E> { &self.c }
+    pub fn get_port(&self) -> *mut ffi::MMAL_PORT_T { self.port.as_ptr() }
+
+    /// Gets one buffer from the pool's queue and sends it to the port
+    pub fn feed_one(&self) -> Result<()> {
+        unsafe {
+            let buffer_ptr = ffi::mmal_queue_get(self.pool.as_ref().queue);
+            if let Some(b) = NonNull::new(buffer_ptr) {
+                let status = ffi::mmal_port_send_buffer(self.port.as_ptr(), b.as_ptr());
+                cst(status, msgf("Could not send buffer", P::name()))?;
+            } else {
+                //TODO complain
+            }
+            Ok(())
+        }
+    }
+    /// Drains all available buffers while sending them to the port
+    pub fn feed_all(&self) -> Result<()> {
+        unsafe {
+            while let Some(b) = NonNull::new(ffi::mmal_queue_get(self.pool.as_ref().queue)) {
+                let status = ffi::mmal_port_send_buffer(self.port.as_ptr(), b.as_ptr());
+                cst(status, msgf("Could not send buffer", P::name()))?;
+            }
+            Ok(())
+        }        
+    }
+    pub fn get_buffer(&self) -> Option<BufferRef> {
+        unsafe {
+            let buffer_ptr = ffi::mmal_queue_get(self.pool.as_ref().queue);
+            let p = NonNull::new(buffer_ptr)?;
+            Some(BufferRef { p })
+        }
+    }
+}
+
+impl<P: ComponentPort> Drop for PortPoolHandle<P> {
+    fn drop(&mut self) {
+        unsafe { ffi::mmal_port_pool_destroy(self.port.as_ptr(), self.pool.as_ptr()) }
+    }
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+pub struct QueueHandle {
+    p: NonNull<ffi::MMAL_QUEUE_T>,
+}
+
+impl QueueHandle {
+    pub fn create() -> Result<Self> {
+        let pool_ptr = unsafe { ffi::mmal_queue_create() };
+        //TODO proper error
+        let p = NonNull::new(pool_ptr)
+            .ok_or_else(|| MmalError::with_status("Unable to create queue".to_owned(), 0))?;
+        Ok(Self { p })
+    }
+
+    pub fn get(&self) -> Option<BufferRef> {
+        unsafe {
+            let buffer_ptr = ffi::mmal_queue_get(self.p.as_ptr());
+            let p = NonNull::new(buffer_ptr)?;
+            Some(BufferRef { p })
+        }
+    }
+    pub fn unget(&self, br: BufferRef) {
+        unsafe {
+            ffi::mmal_queue_put_back(self.p.as_ptr(), br.p.as_ptr());
+        }
+    }
+    pub fn put(&self, b: BufferRef) {
+        unsafe {
+            ffi::mmal_queue_put(self.p.as_ptr(), b.p.as_ptr())
+        }
+    }
+    pub unsafe fn put_unsafe(&self, b: *mut ffi::MMAL_BUFFER_HEADER_T) {
+        ffi::mmal_queue_put(self.p.as_ptr(), b)
+    }
+    pub fn wait(&self) -> Option<BufferRef> {
+        unsafe {
+            let buffer_ptr = ffi::mmal_queue_wait(self.p.as_ptr());
+            let p = NonNull::new(buffer_ptr)?;
+            Some(BufferRef { p })
+        }
+    }
+    pub fn timedwait(&self, timeout_ms: u32) -> Option<BufferRef> {
+        unsafe {
+            let buffer_ptr = ffi::mmal_queue_timedwait(self.p.as_ptr(), timeout_ms);
+            let p = NonNull::new(buffer_ptr)?;
+            Some(BufferRef { p })
+        }
+    }
+
+}
+
+impl Drop for QueueHandle {
+    fn drop(&mut self) {
+        unsafe { ffi::mmal_queue_destroy(self.p.as_ptr()) }
+    }
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+/// This function must be called before any mmal work. Failure to do so will cause errors like:
+///
+/// mmal: mmal_component_create_core: could not find component 'vc.camera_info'
+///
+/// See this for more info https://github.com/thaytan/gst-rpicamsrc/issues/28
+pub fn init() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| unsafe {
+        ffi::bcm_host_init();
+        ffi::vcos_init();
+        ffi::mmal_vc_init();
+    });
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+pub trait ParamIO<P: ComponentPort>  {
+    fn write(&self, target: &ComponentHandle<P::E>) -> Result<()>;
+    fn read(&mut self, target: &ComponentHandle<P::E>) -> Result<()>;
+    unsafe fn set_unsafe(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus;
+    unsafe fn get_unsafe(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus;
+    fn name(&self) -> &'static str;
+}
+
+
+/// Offset of 1st/the only port
+pub const DEFAULT_PORT_OFFSET: isize = 0;
+
+/// Port configuration values
+pub trait PortConfig {
+    unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T);
+}
+
+/// provides glue between a component type, its port type, and parameter
+pub trait ComponentPort {
+    type E: ComponentEntity;
+    unsafe fn get_port(component: &ComponentHandle<Self::E>) -> *mut ffi::MMAL_PORT_T;
+    fn name() -> &'static str;
+
+    fn write<'p>(component: &ComponentHandle<Self::E>, param: &'p dyn ParamIO<Self>) -> Result<()> 
+    where Self: 'p + Sized{
+        param.write(component)
+    }
+
+    fn read<'p>(component: &ComponentHandle<Self::E>, param: &'p mut dyn ParamIO<Self>) -> Result<()> 
+    where Self: 'p + Sized{
+        param.read(component)
+    }
+
+    fn write_multi<'p>(component: &ComponentHandle<Self::E>, params: impl Iterator<Item=&'p dyn ParamIO<Self>>) -> Result<()> 
+    where Self: 'p + Sized{
+        unsafe { 
+            let port = Self::get_port(component);
+            for p in params {
+                let status = p.set_unsafe(port);
+                cst(status, || format!("Unable to set parameter {} on {}", p.name(), Self::name()))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_multi<'p>(component: &ComponentHandle<Self::E>, params: impl Iterator<Item=&'p mut dyn ParamIO<Self>>) -> Result<()>
+    where Self: 'p + Sized {
+        unsafe { 
+            let port = Self::get_port(component);
+            for p in params {
+                let status = p.get_unsafe(port);
+                cst(status, || format!("Unable to get parameter {} on {}", p.name(), Self::name()))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn configure(h: &ComponentHandle<Self::E>, config: impl PortConfig) -> Result<()> {
+        unsafe {
+            let p = Self::get_port(h);
+            config.apply_format(p);
+            let status = ffi::mmal_port_format_commit(p);
+            cst(status, msgf("Unable to commit format on {}", Self::name()))
+        }
+    }
+
+    fn enable(h: &ComponentHandle<Self::E>) -> Result<()> {
+        unsafe {
+            let port = Self::get_port(h);
+            let status = ffi::mmal_port_enable(port, None);
+            cst(status, msgf("Unable to enable", Self::name()))?;
+        }
+        Ok(())
+    }
+
+    /*unsafe fn enable_cb(h: &ComponentHandle<Self::E>, cb: unsafe extern "C" fn(*mut ffi::MMAL_PORT_T, *mut ffi::MMAL_BUFFER_HEADER_T)) -> Result<()> {
+        let port = Self::get_port(h);
+        let status = ffi::mmal_port_enable(port, Some(cb));
+        cst(status, msgf("Unable to enable", Self::name()))?;
+        Ok(())
+    }*/
+}
+
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+
+pub struct SinkAggregate<P: ComponentPort> {
+    q: QueueHandle,
+    p: PortPoolHandle<P>,
+    _self: NonNull<Self>,
+    _p: PhantomPinned
+}
+
+impl<P: ComponentPort> SinkAggregate<P> {
+
+    pub fn create(c: ComponentHandle<P::E>) -> Result<Pin<Box<Self>>> {
+        let q = QueueHandle::create()?;
+        let p = PortPoolHandle::create(c)?;
+        let rv = Self { q, p, _self: NonNull::dangling(), _p: PhantomPinned };
+        let mut rv = Box::new(rv);
+        rv._self = rv.as_ref().into();
+        unsafe { Ok(Pin::new_unchecked(rv)) }
+    }
+    
+    pub fn enable(&self) -> Result<()> {
+        let port = self.p.get_port();
+        unsafe {
+            (*port).userdata = self._self.as_ptr() as *mut ffi::MMAL_PORT_USERDATA_T;
+            let status = ffi::mmal_port_enable(port, Some(Self::cb));
+            cst(status, msgf("Unable to enable", P::name()))?;
+        }
+        Ok(())
+    }
+
+    pub fn disable(&mut self) -> Result<()> {
+        let port = self.p.get_port();
+        unsafe {
+            let status = ffi::mmal_port_disable(port);
+            cst(status, msgf("Unable to disable", P::name()))?;
+            (*port).userdata = mem::zeroed();
+        }
+        Ok(())
+    }
+
+    unsafe extern "C" fn cb(port: *mut ffi::MMAL_PORT_T, buffer: *mut ffi::MMAL_BUFFER_HEADER_T) {
+        let udp = (*port).userdata as *mut Self;
+        let ud = if let Some(ud) = udp.as_mut() { ud } else { return };
+        ud.q.put_unsafe(buffer);
+        //TODO signal nere
+    }
+
+    pub fn feed_one(&self) -> Result<()> {
+        self.p.feed_one()
+    }
+
+
+    pub fn feed_all(&self) -> Result<()> {
+        self.p.feed_all()
+    }
+
+    fn consume(&self, b: BufferRef, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<(bool, bool)>  {
+        let (is_consumed, is_terminal) = b.do_locked(f)?;
+        if is_consumed {
+            // send a buffer to the port in place of the consumed
+            self.p.feed_one()?;
+        } else {
+            // return the buffer to the queue
+            self.q.unget(b) 
+        }
+        Ok((is_consumed, is_terminal))
+    }
+
+    pub fn wait(&self, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<Option<(bool, bool)>> {
+        if let Some(b) = self.q.wait() {
+            Ok(Some(self.consume(b, f)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn timedwait(&self, timeout_ms: u32, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<Option<(bool, bool)>> {
+        if let Some(b) = self.q.timedwait(timeout_ms) {
+            Ok(Some(self.consume(b, f)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get(&self, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<Option<(bool, bool)>> {
+        if let Some(b) = self.q.get() {
+            Ok(Some(self.consume(b, f)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+}
+

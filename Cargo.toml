@@ -1,0 +1,12 @@
+[package]
+name = "mmal-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust wrappers around MMAL C API"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+#mmal-sys = "0.1.0-3"
+#mmal-sys = { git = "https://github.com/vvvy/mmal-sys.git", branch = "rust-analyser-fix" }
+mmal-sys = { path = "../mmal-sys" }
