@@ -1,8 +1,5 @@
 use std::{ptr::NonNull, mem::MaybeUninit, marker::{PhantomData, PhantomPinned}, ffi::c_char, sync::Once, pin::Pin};
-
-use mmal_sys as ffi;
-
-
+use std::task::{Poll, Context, Waker};
 use super::*;
 
 
@@ -160,6 +157,12 @@ impl<PS: ComponentPort, PT: ComponentPort> ConnectionHandle<PS, PT> {
         cst(status, || format!("Unable to enable connection {}->{}", PS::name(), PT::name()))?;
         Ok(())
     }
+
+    pub fn disable(&self) -> Result<()> {
+        let status = unsafe { ffi::mmal_connection_disable(self.c.as_ptr()) };
+        cst(status, || format!("Unable to disable connection {}->{}", PS::name(), PT::name()))?;
+        Ok(())
+    }
 }
 
 impl<PS, PT> Drop for ConnectionHandle<PS, PT> {
@@ -180,13 +183,12 @@ impl<PS, PT> Clone for ConnectionHandle<PS, PT> {
 
 //------------------------------------------------------------------------------------------------------------------------------
 
-
-
-pub struct BufferRef {
-    p: NonNull<ffi::MMAL_BUFFER_HEADER_T>,
+#[derive(Debug, Clone, Copy)]
+pub struct FrameFlags {
+    flags: u32
 }
 
-impl BufferRef {
+impl FrameFlags {
     pub const FLAG_EOS: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_EOS;  /// MMAL_BUFFER_HEADER_FLAG_EOS: u32 = 1;
     pub const FLAG_FRAME_START: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FRAME_START;  /// MMAL_BUFFER_HEADER_FLAG_FRAME_START: u32 = 2;
     pub const FLAG_FRAME_END: u32 = ffi::MMAL_BUFFER_HEADER_FLAG_FRAME_END;  /// MMAL_BUFFER_HEADER_FLAG_FRAME_END: u32 = 4;
@@ -216,14 +218,26 @@ impl BufferRef {
 
     pub const FLAG_TERMINAL_FRAME: u32 = Self::FLAG_FRAME_END | Self::FLAG_TRANSMISSION_FAILED;
 
-    /// pub fn flags(&self) -> u32 { unsafe { self.p.as_ref().flags } }
-    /// pub fn check_flags(&self, mask: u32) -> bool { unsafe { self.p.as_ref().flags & mask != 0 } }
-    /// pub fn is_terminal_frame(&self) -> bool { self.check_flags(Self::FLAG_TERMINAL_FRAME) }
+    pub fn test_one(&self, mask: u32) -> bool { self.flags & mask != 0 }
+    pub fn test_all(&self, mask: u32) -> bool { self.flags & mask == mask }
+    pub fn is_terminal_frame(&self) -> bool { self.test_one(Self::FLAG_TERMINAL_FRAME) }
+}
 
-    /// Returns (is_consumed, is_terminal). If !is_consumed, should be pushed back to the queue. If is_rerminal, expect no more frames
-    pub fn do_locked(&self, mut f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<(bool, bool)> {
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+
+pub struct BufferRef {
+    p: NonNull<ffi::MMAL_BUFFER_HEADER_T>,
+}
+
+impl BufferRef {
+
+
+    /// Returns (is_consumed, user_data). If !is_consumed, should be pushed back to the queue.
+    pub fn do_locked<R>(&self, mut f: impl FnMut(FrameFlags, &[u8]) -> Result<(bool, R)>) -> Result<(bool, R)> {
         unsafe {
-            let flags = self.p.as_ref().flags;
+            let flags = FrameFlags { flags: self.p.as_ref().flags };
             cst(ffi::mmal_buffer_header_mem_lock(self.p.as_ptr()), || "could not lock buffer".to_owned())?;
             let b = self.p.as_ref();
             let rv = f(
@@ -231,8 +245,13 @@ impl BufferRef {
                 std::slice::from_raw_parts(b.data.add(b.offset as usize), b.length as usize)
             );
             ffi::mmal_buffer_header_mem_unlock(self.p.as_ptr());
-            Ok((rv?, flags & Self::FLAG_TERMINAL_FRAME != 0))
+            rv
         }
+    }
+
+    fn new(buffer_ptr: *mut ffi::MMAL_BUFFER_HEADER_T) -> Option<Self> {
+        let p = NonNull::new(buffer_ptr)?;
+        Some(Self { p })
     }
     
 }
@@ -374,9 +393,7 @@ impl QueueHandle {
 
     pub fn get(&self) -> Option<BufferRef> {
         unsafe {
-            let buffer_ptr = ffi::mmal_queue_get(self.p.as_ptr());
-            let p = NonNull::new(buffer_ptr)?;
-            Some(BufferRef { p })
+            BufferRef::new(ffi::mmal_queue_get(self.p.as_ptr()))
         }
     }
     pub fn unget(&self, br: BufferRef) {
@@ -394,16 +411,12 @@ impl QueueHandle {
     }
     pub fn wait(&self) -> Option<BufferRef> {
         unsafe {
-            let buffer_ptr = ffi::mmal_queue_wait(self.p.as_ptr());
-            let p = NonNull::new(buffer_ptr)?;
-            Some(BufferRef { p })
+            BufferRef::new(ffi::mmal_queue_wait(self.p.as_ptr()))
         }
     }
     pub fn timedwait(&self, timeout_ms: u32) -> Option<BufferRef> {
         unsafe {
-            let buffer_ptr = ffi::mmal_queue_timedwait(self.p.as_ptr(), timeout_ms);
-            let p = NonNull::new(buffer_ptr)?;
-            Some(BufferRef { p })
+            BufferRef::new(ffi::mmal_queue_timedwait(self.p.as_ptr(), timeout_ms))
         }
     }
 
@@ -500,6 +513,7 @@ pub trait ComponentPort {
         }
     }
 
+    /*
     fn enable(h: &ComponentHandle<Self::E>) -> Result<()> {
         unsafe {
             let port = Self::get_port(h);
@@ -508,6 +522,7 @@ pub trait ComponentPort {
         }
         Ok(())
     }
+    */
 
     /*unsafe fn enable_cb(h: &ComponentHandle<Self::E>, cb: unsafe extern "C" fn(*mut ffi::MMAL_PORT_T, *mut ffi::MMAL_BUFFER_HEADER_T)) -> Result<()> {
         let port = Self::get_port(h);
@@ -525,6 +540,7 @@ pub trait ComponentPort {
 pub struct SinkAggregate<P: ComponentPort> {
     q: QueueHandle,
     p: PortPoolHandle<P>,
+    w: Option<Waker>,
     _self: NonNull<Self>,
     _p: PhantomPinned
 }
@@ -534,7 +550,7 @@ impl<P: ComponentPort> SinkAggregate<P> {
     pub fn create(c: ComponentHandle<P::E>) -> Result<Pin<Box<Self>>> {
         let q = QueueHandle::create()?;
         let p = PortPoolHandle::create(c)?;
-        let rv = Self { q, p, _self: NonNull::dangling(), _p: PhantomPinned };
+        let rv = Self { q, p, w: None, _self: NonNull::dangling(), _p: PhantomPinned };
         let mut rv = Box::new(rv);
         rv._self = rv.as_ref().into();
         unsafe { Ok(Pin::new_unchecked(rv)) }
@@ -550,7 +566,7 @@ impl<P: ComponentPort> SinkAggregate<P> {
         Ok(())
     }
 
-    pub fn disable(&mut self) -> Result<()> {
+    pub fn disable(&self) -> Result<()> {
         let port = self.p.get_port();
         unsafe {
             let status = ffi::mmal_port_disable(port);
@@ -564,20 +580,25 @@ impl<P: ComponentPort> SinkAggregate<P> {
         let udp = (*port).userdata as *mut Self;
         let ud = if let Some(ud) = udp.as_mut() { ud } else { return };
         ud.q.put_unsafe(buffer);
-        //TODO signal nere
+        ud.w.take().map(|w| w.wake());
     }
 
     pub fn feed_one(&self) -> Result<()> {
         self.p.feed_one()
     }
 
-
     pub fn feed_all(&self) -> Result<()> {
         self.p.feed_all()
     }
 
-    fn consume(&self, b: BufferRef, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<(bool, bool)>  {
-        let (is_consumed, is_terminal) = b.do_locked(f)?;
+    /// Consume a `BufferRef` previously obtained via a method optionally returning `BufferRef` (e.g. `get()`), or via `await`.
+    /// 
+    /// Note that this is the only way to obtain buffer data.
+    /// 
+    /// The consumer function shall return `Ok(true)` to indicate that the buffer has been consumed successfully,
+    /// `Ok(false)` to indicate that the fuffer shall be returned (ungot) to the queue, or `Err(_)` upon error.
+    pub fn consume<R>(&self, b: BufferRef, f: impl FnMut(FrameFlags, &[u8]) -> Result<(bool, R)>) -> Result<(bool, R)>  {
+        let (is_consumed, user_data) = b.do_locked(f)?;
         if is_consumed {
             // send a buffer to the port in place of the consumed
             self.p.feed_one()?;
@@ -585,32 +606,34 @@ impl<P: ComponentPort> SinkAggregate<P> {
             // return the buffer to the queue
             self.q.unget(b) 
         }
-        Ok((is_consumed, is_terminal))
+        Ok((is_consumed, user_data))
     }
 
-    pub fn wait(&self, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<Option<(bool, bool)>> {
-        if let Some(b) = self.q.wait() {
-            Ok(Some(self.consume(b, f)?))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn timedwait(&self, timeout_ms: u32, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<Option<(bool, bool)>> {
-        if let Some(b) = self.q.timedwait(timeout_ms) {
-            Ok(Some(self.consume(b, f)?))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get(&self, f: impl FnMut(u32, &[u8]) -> Result<bool>) -> Result<Option<(bool, bool)>> {
-        if let Some(b) = self.q.get() {
-            Ok(Some(self.consume(b, f)?))
-        } else {
-            Ok(None)
-        }
-    }
-
+    /// Wait for a buffer infinitely
+    pub fn wait(&self) -> Option<BufferRef> { self.q.wait() }
+    /// Wait for a buffer at most specified number of milliseconds
+    pub fn timedwait(&self, timeout_ms: u32) -> Option<BufferRef> { self.q.timedwait(timeout_ms) }
+    /// Get a buffer from the queue, if any
+    pub fn get(&self) -> Option<BufferRef> { self.q.get() }
 }
 
+
+
+
+impl<P: ComponentPort> std::future::Future for SinkAggregate<P> {
+    type Output = BufferRef;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        unsafe {
+            let sa = self.get_unchecked_mut();
+
+            sa.w = Some(cx.waker().clone());
+
+            if let Some(b) = sa.q.get() {
+                Poll::Ready(b)
+            } else {
+                Poll::Pending
+            }
+        }
+    }
+}

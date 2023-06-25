@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use mmal_sys as ffi;
 use ffi::MMAL_STATUS_T;
 use super::*;
 
@@ -125,7 +124,7 @@ macro_rules! enumize {
         #[repr(u32)]
         pub enum $enumid { $($int = ffi::$ext),+ }
         impl TryFrom<u32> for $enumid {
-            type Error = MmalError; //TODO correct error
+            type Error = crate::error::MmalError; //TODO correct error
             fn try_from(value: u32) -> Result<Self> {
                 match value {
                     $(ffi::$ext => Ok($enumid::$int),)+

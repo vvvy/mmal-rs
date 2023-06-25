@@ -1,5 +1,3 @@
-use mmal_sys as ffi;
-
 use super::*;
 use crate::{idp, enumize, enumerated_inner_type};
 
@@ -14,11 +12,7 @@ impl Entity for CameraEntity {
 
 //------------------------------------------------------------------------------------------------------------------------------
 
-impl ComponentEntity for CameraEntity {
-    //type InputPort = EmptyPortSet;
-    //type OutputPort = CameraOutputPort;
-    //type ComponentParam = CameraParameter;
-}
+impl ComponentEntity for CameraEntity { }
 
 pub type CameraComponentHandle = ComponentHandle<CameraEntity>;
 
@@ -53,157 +47,87 @@ enum CameraOutputPort {
     Capture = 2
 }
 
-/* 
-/// Camera settinggs
-#[derive(Clone, Debug)]
-pub enum CameraParameter {
-    /// Camera ordinal
-    CameraNum(u8),
-    /// Basic camera configuration
-    CameraConfig(CameraConfig),
-    /// Saturation [-100, 100]
-    Saturation(i8),
-    /// Sharpness [-100, 100]
-    Sharpness(i8),
-    /// Contrast [-100, 100]
-    Contrast(i8),
-    /// Brightness [0, 100]
-    Brightness(i8),
-    /// ISO
-    ISO(u32),
-    /// Shutter speed in mcroseconds
-    ShutterSpeed(u32)
-
-}
-
-impl TryInto<(u32, ParamValue)> for CameraParameter {
-    type Error = MmalError;
-    fn try_into(self) -> Result<(u32, ParamValue)> {
-        use CameraParameter::*;
-        use ParamValue::*;
-        match self {
-            CameraNum(v) => Ok((ffi::MMAL_PARAMETER_CAMERA_NUM, I32(v as i32))), 
-            CameraParameter::CameraConfig(config) => Ok((ffi::MMAL_PARAMETER_CAMERA_CONFIG, ParamValue::CameraConfig(config))),
-            Saturation(v) => Ok((ffi::MMAL_PARAMETER_SATURATION, Rational(v as i32, 100))),
-            Sharpness(v) => Ok((ffi::MMAL_PARAMETER_SHARPNESS, Rational(v as i32, 100))),
-            Contrast(v) => Ok((ffi::MMAL_PARAMETER_CONTRAST, Rational(v as i32, 100))),
-            Brightness(v) => Ok((ffi::MMAL_PARAMETER_BRIGHTNESS, Rational(v as i32, 100))),
-            ISO(v) => Ok((ffi::MMAL_PARAMETER_ISO, U32(v))),
-            ShutterSpeed(v) => Ok((ffi::MMAL_PARAMETER_SHUTTER_SPEED, U32(v))),
-        }
-    }
-}
-
-impl ParamUpdate for CameraParameter {
-    fn update(&mut self, pv: ParamValue) {
-        use CameraParameter::*;
-        use ParamValue::*;
-        fn rconv(num: i32, den: i32) -> i32 { if den == 100 { num } else { ((num as f32) / (den as f32) * 100.) as i32 } }
-        match (self, pv) {
-            (CameraNum(t), I32(v)) => *t = v as u8,
-            (CameraParameter::CameraConfig(t), ParamValue::CameraConfig(v)) => *t = v,
-            (Saturation(t), Rational(num, den)) => *t = rconv(num, den) as i8,
-            (Sharpness(t), Rational(num, den)) => *t = rconv(num, den) as i8,
-            (Contrast(t), Rational(num, den)) => *t = rconv(num, den) as i8,
-            (Brightness(t), Rational(num, den)) => *t = rconv(num, den) as i8,
-            (ISO(t), U32(v)) => *t = v,
-            (ShutterSpeed(t), U32(v)) => *t = v,
-            (a, b) => panic!("Unsuported parameter update: {a:?} <- {b:?}")
-        }
-    }
-}
-*/
 //------------------------------------------------------------------------------------------------------------------------------
 
-/// Preview port configuration
-pub struct CameraPreviewPortConfig {
-    pub encoding: u32
+#[derive(Debug, Clone, Copy)]
+pub struct GenericPortConfig {
+    pub encoding: u32,
+    pub es_video_width: u32,
+    pub es_video_height: u32,
+    pub es_video_crop_x: i32,
+    pub es_video_crop_y: i32, 
+    pub es_video_crop_width: i32,
+    pub es_video_crop_height: i32, 
+    pub es_video_frame_rate_num: i32, 
+    pub es_video_frame_rate_den: i32,
 }
 
-impl Default for CameraPreviewPortConfig {
-    fn default() -> Self {
-        Self { encoding: ffi::MMAL_ENCODING_OPAQUE }
-    }
-}
-
-impl PortConfig for CameraPreviewPortConfig {
+impl PortConfig for GenericPortConfig {
     unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T) {
         let format = &mut (*(*port).format);
         format.encoding = fix_encoding(port, self.encoding);
 
         let mut es = &mut (*format.es);
-        // Use a full FOV 4:3 mode
-        es.video.width = ffi::vcos_align_up(1024, 32);
-        es.video.height = ffi::vcos_align_up(768, 16);
-        es.video.crop.x = 0;
-        es.video.crop.y = 0;
-        es.video.crop.width = 1024;
-        es.video.crop.height = 768;
-        es.video.frame_rate.num = 0;
-        es.video.frame_rate.den = 1;
+        es.video.width = self.es_video_width;
+        es.video.height = self.es_video_height;
+        es.video.crop.x = self.es_video_crop_x;
+        es.video.crop.y = self.es_video_crop_y;
+        es.video.crop.width = self.es_video_crop_width;
+        es.video.crop.height = self.es_video_crop_height;
+        es.video.frame_rate.num = self.es_video_frame_rate_num;
+        es.video.frame_rate.den = self.es_video_frame_rate_den;
     }
+}
+
+pub fn camera_port_config_1024_768() -> GenericPortConfig {
+    // Use a full FOV 4:3 mode
+    GenericPortConfig {
+        encoding: ffi::MMAL_ENCODING_OPAQUE,
+        es_video_width: ffi::vcos_align_up(1024, 32),
+        es_video_height: ffi::vcos_align_up(768, 16),
+        es_video_crop_x: 0,
+        es_video_crop_y: 0,
+        es_video_crop_width: 1024,
+        es_video_crop_height: 768,
+        es_video_frame_rate_num: 0,
+        es_video_frame_rate_den: 1,   
+    }
+}
+
+/// Capture (still) port configuration
+pub fn camera_port_config_wh(width: u32, height: u32) -> GenericPortConfig {
+    GenericPortConfig {
+        encoding: ffi::MMAL_ENCODING_OPAQUE,
+        es_video_width: ffi::vcos_align_up(width, 32),
+        es_video_height: ffi::vcos_align_up(height, 16),
+        es_video_crop_x: 0,
+        es_video_crop_y: 0,
+        es_video_crop_width: width as i32,
+        es_video_crop_height: height as i32,
+        es_video_frame_rate_num: 0,
+        es_video_frame_rate_den: 1,   
+    }
+}
+
+
+
+/// Preview port configuration
+pub fn camera_preview_port_config() -> GenericPortConfig {
+    camera_port_config_1024_768()
 }
 
 /// Video port configuration
-pub struct CameraVideoPortConfig {
-    pub encoding: u32
+pub fn camera_video_port_config() -> GenericPortConfig {
+    camera_port_config_1024_768()
 }
 
-impl Default for CameraVideoPortConfig {
-    fn default() -> Self {
-        Self { encoding: ffi::MMAL_ENCODING_OPAQUE }
-    }
-}
-
-impl PortConfig for CameraVideoPortConfig {
-    unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T) {
-        let format = &mut (*(*port).format);
-        format.encoding = fix_encoding(port, self.encoding);
-
-        let mut es = &mut (*format.es);
-        // Use a full FOV 4:3 mode
-        es.video.width = ffi::vcos_align_up(1024, 32);
-        es.video.height = ffi::vcos_align_up(768, 16);
-        es.video.crop.x = 0;
-        es.video.crop.y = 0;
-        es.video.crop.width = 1024;
-        es.video.crop.height = 768;
-        es.video.frame_rate.num = 0;
-        es.video.frame_rate.den = 1;
-    }
+/// Capture (still) port configuration
+pub fn camera_capture_port_config() -> GenericPortConfig {
+    camera_port_config_wh(320, 240)
 }
 
 
-pub struct CameraCapturePortConfig {
-    pub encoding: u32,
-    pub width: u32,     //settings.width
-    pub height: u32,    //settings.height
-
-}
-
-impl Default for CameraCapturePortConfig {
-    fn default() -> Self {
-        Self { encoding: ffi::MMAL_ENCODING_OPAQUE, width: 320, height: 240 }
-    }
-}
-
-impl PortConfig for CameraCapturePortConfig {
-    unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T) {
-        let format = &mut (*(*port).format);
-        format.encoding = fix_encoding(port, self.encoding);
-
-        let mut es = &mut (*format.es);
-
-        es.video.width = ffi::vcos_align_up(self.width, 32);
-        es.video.height = ffi::vcos_align_up(self.height, 16);
-        es.video.crop.x = 0;
-        es.video.crop.y = 0;
-        es.video.crop.width = self.width as i32;
-        es.video.crop.height = self.height as i32;
-        es.video.frame_rate.num = 0; 
-        es.video.frame_rate.den = 1;
-    }
-
+/*
     /*
     unsafe fn post_commit(&self, port: *mut ffi::MMAL_PORT_T) -> Result<()> {
         let port = &mut *port;
@@ -212,9 +136,7 @@ impl PortConfig for CameraCapturePortConfig {
         Ok(())
     }
     */
-}
-
-
+ */
 
 //------------------------------------------------------------------------------------------------------------------------------
 
@@ -318,6 +240,23 @@ pub struct CameraConfig {
     /// Actual mode is controlled by MMAL_PARAMETER_CAPTURE_MODE
     pub fast_preview_resume: bool,
     pub use_stc_timestamp: CameraTimestampMode,
+}
+
+impl CameraConfig {
+    pub fn from_instance_info(instance: &CameraInstanceInfo) -> Self {
+        Self { 
+            max_stills_w: instance.max_width, 
+            max_stills_h: instance.max_height, 
+            stills_yuv422: false, 
+            one_shot_stills: true, 
+            max_preview_video_w: instance.max_width, 
+            max_preview_video_h: instance.max_height, 
+            num_preview_video_frames: 1, 
+            stills_capture_circular_buffer_height: 0, 
+            fast_preview_resume: false, 
+            use_stc_timestamp: CameraTimestampMode::ResetSTC 
+        }
+    }
 }
 
 pub struct CameraConfigInnerType {
@@ -482,6 +421,9 @@ enumerated_inner_type!{ExposureMeteringModeInnerType, ExposureMeteringMode, MMAL
 idp!{MMAL_PARAMETER_EXP_METERING_MODE}
 /// Exposure mode
 pub type PExposureMeteringMode = Param<CameraCapturePort, ExposureMeteringModeInnerType>;
+
+
+// TODO implement all the following parameters
 
             /*
 ---------------------------------------------------------------------------------------------------------------

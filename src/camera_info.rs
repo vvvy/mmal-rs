@@ -23,41 +23,8 @@ impl Entity for CameraInfoEntity {
     fn name() -> &'static str { "camera-info" }
 }
 
-/* 
-/// Camera settinggs
-#[derive(Clone, Debug)]
-pub enum CameraInfoParameter {
-    /// Camera information
-    CameraInfo(CameraInfo),
-}
 
-impl TryInto<(u32, ParamValue)> for CameraInfoParameter {
-    type Error = MmalError;
-    fn try_into(self) -> Result<(u32, ParamValue)> {
-        match self {
-            CameraInfoParameter::CameraInfo(v) => Ok((ffi::MMAL_PARAMETER_CAMERA_INFO, ParamValue::CameraInfo(v))),
-        }
-    }
-}
-
-impl ParamUpdate for CameraInfoParameter {
-    fn update(&mut self, pv: ParamValue) {
-        match (self, pv) {
-            (CameraInfoParameter::CameraInfo(t), ParamValue::CameraInfo(v)) => *t = v,
-            (a, b) => panic!("Unsuported parameter update: {a:?} <- {b:?}")
-        }
-    }
-}
-
-*/
-
-
-
-impl ComponentEntity for CameraInfoEntity {
-    //type InputPort = EmptyPortSet;
-    //type OutputPort = EmptyPortSet;
-    //type ComponentParam = CameraInfoParameter;
-}
+impl ComponentEntity for CameraInfoEntity { }
 
 pub type CameraInfoComponentHandle = ComponentHandle<CameraInfoEntity>;
 

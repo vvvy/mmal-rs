@@ -7,6 +7,21 @@ description = "Rust wrappers around MMAL C API"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#mmal-sys = "0.1.0-3"
-#mmal-sys = { git = "https://github.com/vvvy/mmal-sys.git", branch = "rust-analyser-fix" }
-mmal-sys = { path = "../mmal-sys" }
+libc = "0.2"
+
+[dev-dependencies]
+log = "0.4"
+env_logger = "0.10"
+
+[build-dependencies]
+bindgen = { version = "0.66.1", optional = true }
+
+[features]
+default = ["generate_bindings"]
+
+# Enable this feature to automatically generate bindings for the mmal headers.
+# The default is to use the bindings already included in the src directory.
+generate_bindings = ["bindgen"]
+
+#[package.metadata.docs.rs]
+#default-target = "armv7-unknown-linux-gnueabihf"

@@ -10,11 +10,7 @@ impl Entity for EncoderEntity {
     fn name() -> &'static str { "encoder" }
 }
 
-impl ComponentEntity for EncoderEntity {
-    //type InputPort = OnePortSet;
-    //type OutputPort = OnePortSet;
-    //type ComponentParam = EmptyParamSet;
-}
+impl ComponentEntity for EncoderEntity { }
 
 pub type EncoderComponentHandle = ComponentHandle<EncoderEntity>;
 
