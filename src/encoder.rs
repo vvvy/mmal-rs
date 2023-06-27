@@ -78,4 +78,18 @@ impl PortConfig for EncoderOutFormat {
         let format = &mut (*(*port).format);
         format.encoding = fix_encoding(port, self.encoding);
     }
+
+    unsafe fn apply_buffer_policy(&self, port: *mut ffi::MMAL_PORT_T) {
+        let port = &mut *port;
+
+        port.buffer_num = port.buffer_num_recommended;
+        if port.buffer_num < port.buffer_num_min { 
+            port.buffer_num = port.buffer_num_min;
+        }
+
+        port.buffer_size = port.buffer_size_recommended;
+        if port.buffer_size < port.buffer_size_min { 
+            port.buffer_size = port.buffer_size_min;
+        }
+    }
 }

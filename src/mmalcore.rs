@@ -279,9 +279,8 @@ pub struct PoolHandle {
 impl PoolHandle {
     pub fn create(headers: u32, payload_size: u32) -> Result<Self> {
         let pool_ptr = unsafe { ffi::mmal_pool_create(headers, payload_size) };
-        //TODO proper error
         let p = NonNull::new(pool_ptr)
-            .ok_or_else(|| MmalError::with_status("Unable to create pool".to_owned(), 0))?;
+            .ok_or_else(|| MmalError::no_status("Unable to create pool".to_owned()))?;
         Ok(Self { p })
     }
 
@@ -321,7 +320,6 @@ impl<P: ComponentPort> PortPoolHandle<P> {
             let port = NonNull::new(port)
                 .ok_or_else(|| MmalError::no_status("Unable to get port".to_owned()))?;
 
-            // TODO make up (*port).buffer_num, (*port).buffer_size here
             let pool = ffi::mmal_port_pool_create(
                 port.as_ptr(),
                 port.as_ref().buffer_num, 
@@ -343,11 +341,11 @@ impl<P: ComponentPort> PortPoolHandle<P> {
             let buffer_ptr = ffi::mmal_queue_get(self.pool.as_ref().queue);
             if let Some(b) = NonNull::new(buffer_ptr) {
                 let status = ffi::mmal_port_send_buffer(self.port.as_ptr(), b.as_ptr());
-                cst(status, msgf("Could not send buffer", P::name()))?;
+                cst(status, msgf("Could not send buffer", P::name()))
             } else {
-                //TODO complain
+                // TODO this should be logged error, not fatal
+                Err(MmalError::no_status("Unable to feed a buffer - queue is empty".to_owned()))
             }
-            Ok(())
         }
     }
     /// Drains all available buffers while sending them to the port
@@ -385,9 +383,8 @@ pub struct QueueHandle {
 impl QueueHandle {
     pub fn create() -> Result<Self> {
         let pool_ptr = unsafe { ffi::mmal_queue_create() };
-        //TODO proper error
         let p = NonNull::new(pool_ptr)
-            .ok_or_else(|| MmalError::with_status("Unable to create queue".to_owned(), 0))?;
+            .ok_or_else(|| MmalError::no_status("Unable to create queue".to_owned()))?;
         Ok(Self { p })
     }
 
@@ -462,6 +459,7 @@ pub const DEFAULT_PORT_OFFSET: isize = 0;
 /// Port configuration values
 pub trait PortConfig {
     unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T);
+    unsafe fn apply_buffer_policy(&self, port: *mut ffi::MMAL_PORT_T);
 }
 
 /// provides glue between a component type, its port type, and parameter
@@ -509,8 +507,20 @@ pub trait ComponentPort {
             let p = Self::get_port(h);
             config.apply_format(p);
             let status = ffi::mmal_port_format_commit(p);
-            cst(status, msgf("Unable to commit format on {}", Self::name()))
+            cst(status, || format!("Unable to commit format on {}", Self::name()))?;
+            config.apply_buffer_policy(p);
+            Ok(())
         }
+    }
+
+    fn get_buffers_config(h: &ComponentHandle<Self::E>) -> ((u32, u32, u32), (u32, u32, u32)) {
+        unsafe {
+            let p = & *Self::get_port(h);
+            (
+                (p.buffer_num, p.buffer_num_recommended, p.buffer_num_min),
+                (p.buffer_size, p.buffer_size_recommended, p.buffer_size_min)
+            )
+        }        
     }
 
     /*
@@ -600,6 +610,8 @@ impl<P: ComponentPort> SinkAggregate<P> {
     pub fn consume<R>(&self, b: BufferRef, f: impl FnMut(FrameFlags, &[u8]) -> Result<(bool, R)>) -> Result<(bool, R)>  {
         let (is_consumed, user_data) = b.do_locked(f)?;
         if is_consumed {
+            // drop buffer so it's released to the pool
+            std::mem::drop(b);
             // send a buffer to the port in place of the consumed
             self.p.feed_one()?;
         } else {

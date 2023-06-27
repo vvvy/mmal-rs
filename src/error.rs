@@ -9,8 +9,8 @@ pub struct MmalError {
 }
 
 impl MmalError {
-    pub fn with_status(message: String, status: MmalStatus) -> Self { Self { status: Some(status), message } }
-    pub fn no_status(message: String) -> Self { Self { status: None, message } }
+    pub(crate) fn with_status(message: String, status: MmalStatus) -> Self { Self { status: Some(status), message } }
+    pub(crate) fn no_status(message: String) -> Self { Self { status: None, message } }
 
     pub fn message(&self) -> &str { &self.message }
     pub fn status_str(&self) -> Option<Cow<'static, str>> {

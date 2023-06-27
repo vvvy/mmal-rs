@@ -6,7 +6,7 @@ use std::os::raw::c_uint;
 // pub const VCOS_ALIGN_DOWN: c_uint = mmal_fourcc!p,n) (((ptrdiff_t)(p)) & ~((n)-1));
 // pub const VCOS_ALIGN_UP: c_uint = mmal_fourcc!p,n) VCOS_ALIGN_DOWN((ptrdiff_t)(p)+(n)-1,(n));
 
-pub fn vcos_align_down(p: u32, n: u8) -> u32 {
+pub const fn vcos_align_down(p: u32, n: u8) -> u32 {
     p & !((n - 1) as u32)
 }
 
@@ -22,7 +22,7 @@ fn test_vcos_align_down() {
     assert_eq!(result, 9984, concat!("(10000, 32): ", stringify!(result)));
 }
 
-pub fn vcos_align_up(p: u32, n: u8) -> u32 {
+pub const fn vcos_align_up(p: u32, n: u8) -> u32 {
     vcos_align_down(p + (n as u32) - 1, n)
 }
 

@@ -49,9 +49,33 @@ enum CameraOutputPort {
 
 //------------------------------------------------------------------------------------------------------------------------------
 
+/// Port buffer size configuration policy
+#[derive(Debug, Clone, Copy)]
+pub enum BufferSizePolicy {
+    /// Set to recommended, or to minimum, whichever is higher
+    Recommended,
+    /// Set to expicit this number, or to minimum, whichever is higher
+    Explicit(u32)
+}
+
+/// Port buffer count configuration policy
+#[derive(Debug, Clone, Copy)]
+pub enum BufferCountPolicy {
+    /// Set to recommended, or to minimum, whichever is higher
+    Recommended,
+    /// Set to expicit this number, or to minimum, whichever is higher
+    Explicit(u32)
+}
+
+
+
+/// Generic port configuration data
+/// 
+/// Passed to ComponentPort::configure
 #[derive(Debug, Clone, Copy)]
 pub struct GenericPortConfig {
     pub encoding: u32,
+    pub encoding_variant: u32,
     pub es_video_width: u32,
     pub es_video_height: u32,
     pub es_video_crop_x: i32,
@@ -60,12 +84,15 @@ pub struct GenericPortConfig {
     pub es_video_crop_height: i32, 
     pub es_video_frame_rate_num: i32, 
     pub es_video_frame_rate_den: i32,
+    pub buffer_count_policy: BufferCountPolicy,
+    pub buffer_size_policy: BufferSizePolicy,
 }
 
 impl PortConfig for GenericPortConfig {
     unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T) {
         let format = &mut (*(*port).format);
         format.encoding = fix_encoding(port, self.encoding);
+        format.encoding_variant = self.encoding_variant;
 
         let mut es = &mut (*format.es);
         es.video.width = self.es_video_width;
@@ -77,27 +104,48 @@ impl PortConfig for GenericPortConfig {
         es.video.frame_rate.num = self.es_video_frame_rate_num;
         es.video.frame_rate.den = self.es_video_frame_rate_den;
     }
-}
 
-pub fn camera_port_config_1024_768() -> GenericPortConfig {
-    // Use a full FOV 4:3 mode
-    GenericPortConfig {
-        encoding: ffi::MMAL_ENCODING_OPAQUE,
-        es_video_width: ffi::vcos_align_up(1024, 32),
-        es_video_height: ffi::vcos_align_up(768, 16),
-        es_video_crop_x: 0,
-        es_video_crop_y: 0,
-        es_video_crop_width: 1024,
-        es_video_crop_height: 768,
-        es_video_frame_rate_num: 0,
-        es_video_frame_rate_den: 1,   
+    unsafe fn apply_buffer_policy(&self, port: *mut ffi::MMAL_PORT_T) {
+        let port = &mut *port;
+        match self.buffer_count_policy {
+            BufferCountPolicy::Recommended => {
+                port.buffer_num = port.buffer_num_recommended;
+                if port.buffer_num < port.buffer_num_min { 
+                    port.buffer_num = port.buffer_num_min;
+                }
+            }
+            BufferCountPolicy::Explicit(n) => {
+                port.buffer_num = n;
+                if port.buffer_num < port.buffer_num_min { 
+                    port.buffer_num = port.buffer_num_min;
+                }                
+            }
+        }
+        match self.buffer_size_policy {
+            BufferSizePolicy::Recommended => {
+                port.buffer_size = port.buffer_size_recommended;
+                if port.buffer_size < port.buffer_size_min { 
+                    port.buffer_size = port.buffer_size_min;
+                }
+            }
+            BufferSizePolicy::Explicit(n) => {
+                port.buffer_size = n;
+                if port.buffer_size < port.buffer_size_min { 
+                    port.buffer_size = port.buffer_size_min;
+                }               
+            }
+        }
     }
 }
 
-/// Capture (still) port configuration
-pub fn camera_port_config_wh(width: u32, height: u32) -> GenericPortConfig {
+
+/// Generic camera port configuration template
+/// 
+/// Should be fed to ComponentPort::configure after optional adjustments
+pub const fn camera_port_config(width: u32, height: u32) -> GenericPortConfig {
     GenericPortConfig {
         encoding: ffi::MMAL_ENCODING_OPAQUE,
+        encoding_variant: 0,
         es_video_width: ffi::vcos_align_up(width, 32),
         es_video_height: ffi::vcos_align_up(height, 16),
         es_video_crop_x: 0,
@@ -105,27 +153,35 @@ pub fn camera_port_config_wh(width: u32, height: u32) -> GenericPortConfig {
         es_video_crop_width: width as i32,
         es_video_crop_height: height as i32,
         es_video_frame_rate_num: 0,
-        es_video_frame_rate_den: 1,   
+        es_video_frame_rate_den: 1,
+        buffer_count_policy: BufferCountPolicy::Explicit(3),
+        buffer_size_policy: BufferSizePolicy::Recommended,
     }
 }
 
+/// full FOV 4:3 mode
+pub const CAMERA_PORT_CONFIG_1024X768: GenericPortConfig = camera_port_config(1024, 768);
+
+/// 320x240, good for streaming
+pub const CAMERA_PORT_CONFIG_320X240: GenericPortConfig = camera_port_config(320, 240);
 
 
-/// Preview port configuration
+/* 
+/// Default preview port configuration
 pub fn camera_preview_port_config() -> GenericPortConfig {
-    camera_port_config_1024_768()
+    camera_port_config_1024x768()
 }
 
 /// Video port configuration
 pub fn camera_video_port_config() -> GenericPortConfig {
-    camera_port_config_1024_768()
+    camera_port_config_1024x768()
 }
 
 /// Capture (still) port configuration
 pub fn camera_capture_port_config() -> GenericPortConfig {
-    camera_port_config_wh(320, 240)
+    camera_port_config(320, 240)
 }
-
+*/
 
 /*
     /*
@@ -357,6 +413,7 @@ pub type PCameraNum = Param<CameraControlPort, Int32<MMAL_PARAMETER_CAMERA_NUM>>
 idp!{MMAL_PARAMETER_CAPTURE}
 /// Activate/deactivate capture
 pub type PCapture = Param<CameraCapturePort, Boolean<MMAL_PARAMETER_CAPTURE>>;
+pub type PCaptureVideo = Param<CameraVideoPort, Boolean<MMAL_PARAMETER_CAPTURE>>;
 
 /*
    result += raspicamcontrol_set_exposure_mode(camera, params->exposureMode);
