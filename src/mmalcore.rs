@@ -168,7 +168,6 @@ impl<PS: ComponentPort, PT: ComponentPort> ConnectionHandle<PS, PT> {
 impl<PS: ComponentPort, PT: ComponentPort> Drop for ConnectionHandle<PS, PT> {
     fn drop(&mut self) {
         unsafe {
-            log_deinit!(Result::<()>::Err(MmalError::no_status("test destroy m".to_owned())));
             log_deinit!(cst!(ffi::mmal_connection_destroy(self.c.as_ptr()), "mmal_connection_destroy({}->{})", PS::name(), PT::name()));
         }
     }
@@ -319,7 +318,7 @@ impl<P: ComponentPort> PortPoolHandle<P> {
             let port = P::get_port(&c);
 
             let port = NonNull::new(port)
-                .ok_or_else(|| MmalError::no_status("Unable to get port".to_owned()))?;
+                .ok_or_else(|| MmalError::with_cause(Cause::GetPort))?;
 
             let pool = ffi::mmal_port_pool_create(
                 port.as_ptr(),
@@ -327,7 +326,7 @@ impl<P: ComponentPort> PortPoolHandle<P> {
                 port.as_ref().buffer_size
             );
             let pool = NonNull::new(pool)
-                .ok_or_else(|| MmalError::no_status("Unable to create pool".to_owned()))?;
+                .ok_or_else(|| MmalError::with_cause(Cause::CreatePool))?;
             
             Ok(Self { c, port, pool })          
         }
@@ -345,7 +344,7 @@ impl<P: ComponentPort> PortPoolHandle<P> {
                 cst!(status, "{}: could not send buffer", P::name())
             } else {
                 // TODO this should be logged error, not fatal
-                Err(MmalError::no_status("Unable to feed a buffer - queue is empty".to_owned()))
+                Err(MmalError::with_cause(Cause::QueueEmpty))
             }
         }
     }
@@ -385,7 +384,7 @@ impl QueueHandle {
     pub fn create() -> Result<Self> {
         let pool_ptr = unsafe { ffi::mmal_queue_create() };
         let p = NonNull::new(pool_ptr)
-            .ok_or_else(|| MmalError::no_status("Unable to create queue".to_owned()))?;
+            .ok_or_else(|| MmalError::with_cause(Cause::CreateQueue))?;
         Ok(Self { p })
     }
 

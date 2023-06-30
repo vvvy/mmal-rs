@@ -128,7 +128,7 @@ macro_rules! enumize {
             fn try_from(value: u32) -> Result<Self> {
                 match value {
                     $(ffi::$ext => Ok($enumid::$int),)+
-                    other => Err(MmalError::no_status(format!("Invalid value {} for {}", other, stringify!($enumid))))
+                    other => Err(MmalError::new(Cause::InvalidEnumValue, format!("Invalid value {} for {}", other, stringify!($enumid))))
                 }
             }
         }
