@@ -4,6 +4,7 @@ pub mod param;
 pub mod camera_info;
 pub mod camera;
 pub mod encoder;
+pub mod video_encoder;
 pub mod ffi;
 
 use std::{mem, ffi::{CStr, c_char}, fmt::Debug};
@@ -14,6 +15,7 @@ pub use param::*;
 pub use camera_info::*;
 pub use camera::*;
 pub use encoder::*;
+pub use video_encoder::*;
 
 unsafe fn fix_encoding(port: *mut ffi::MMAL_PORT_T, encoding: u32) -> u32 {
     // On firmware prior to June 2016, camera and video_splitter
