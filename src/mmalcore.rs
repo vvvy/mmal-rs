@@ -89,6 +89,52 @@ impl<E: ComponentEntity> Clone for ComponentHandle<E> {
     }
 }
 
+impl<E: ComponentEntity> AsRef<ComponentHandle<E>> for ComponentHandle<E> {
+    fn as_ref(&self) -> &ComponentHandle<E> { self }
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+/// A component handle container that allows 'automatic' enabling a component during the container's lifespan
+pub struct ComponentEnabler<E: ComponentEntity> {
+    h: ComponentHandle<E>
+}
+
+impl<E: ComponentEntity> ComponentEnabler<E> {
+    pub fn new(h: ComponentHandle<E>) -> Result<Self> {
+        h.enable()?;
+        Ok(Self { h })
+    }
+
+    pub fn with_init(h: ComponentHandle<E>, f: impl FnOnce(&ComponentHandle<E>) -> Result<()>) -> Result<Self> {
+        f(&h)?;
+        h.enable()?;
+        Ok(Self { h })
+    }
+
+    pub fn inner(&self) -> &ComponentHandle<E> { 
+        &self.h 
+    }
+}
+
+impl<E: ComponentEntity> AsRef<ComponentHandle<E>> for ComponentEnabler<E> {
+    fn as_ref(&self) -> &ComponentHandle<E> {
+        &self.h
+    }
+}
+
+impl<E: ComponentEntity> AsMut<ComponentHandle<E>> for ComponentEnabler<E> {
+    fn as_mut(&mut self) -> &mut ComponentHandle<E> {
+        &mut self.h
+    }
+}
+
+impl<E: ComponentEntity> Drop for ComponentEnabler<E> {
+    fn drop(&mut self) {
+        log_deinit!(self.h.disable());
+    }
+}
 
 
 //------------------------------------------------------------------------------------------------------------------------------
@@ -135,13 +181,13 @@ pub struct ConnectionHandle<PS: ComponentPort, PT: ComponentPort> {
 }
 
 impl<PS: ComponentPort, PT: ComponentPort> ConnectionHandle<PS, PT> {
-    pub fn create(source: &ComponentHandle<PS::E>, target: &ComponentHandle<PT::E>) -> Result<Self> {
+    pub fn create(source: impl AsRef<ComponentHandle<PS::E>>, target: impl AsRef<ComponentHandle<PT::E>>) -> Result<Self> {
         let c = unsafe {     
             let mut connection_ptr = MaybeUninit::uninit();
             let status = ffi::mmal_connection_create(
                 connection_ptr.as_mut_ptr(),
-                PS::get_port(source),
-                PT::get_port(target),
+                PS::get_port(source.as_ref()),
+                PT::get_port(target.as_ref()),
                 ffi::MMAL_CONNECTION_FLAG_TUNNELLING
                     | ffi::MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT,
             );
@@ -468,20 +514,20 @@ pub trait ComponentPort {
     unsafe fn get_port(component: &ComponentHandle<Self::E>) -> *mut ffi::MMAL_PORT_T;
     fn name() -> &'static str;
 
-    fn write<'p>(component: &ComponentHandle<Self::E>, param: &'p dyn ParamIO<Self>) -> Result<()> 
+    fn write<'p>(component: impl AsRef<ComponentHandle<Self::E>>, param: &'p dyn ParamIO<Self>) -> Result<()> 
     where Self: 'p + Sized{
-        param.write(component)
+        param.write(component.as_ref())
     }
 
-    fn read<'p>(component: &ComponentHandle<Self::E>, param: &'p mut dyn ParamIO<Self>) -> Result<()> 
+    fn read<'p>(component: impl AsRef<ComponentHandle<Self::E>>, param: &'p mut dyn ParamIO<Self>) -> Result<()> 
     where Self: 'p + Sized{
-        param.read(component)
+        param.read(component.as_ref())
     }
 
-    fn write_multi<'p>(component: &ComponentHandle<Self::E>, params: impl Iterator<Item=&'p dyn ParamIO<Self>>) -> Result<()> 
+    fn write_multi<'p>(component: impl AsRef<ComponentHandle<Self::E>>, params: impl Iterator<Item=&'p dyn ParamIO<Self>>) -> Result<()> 
     where Self: 'p + Sized{
         unsafe { 
-            let port = Self::get_port(component);
+            let port = Self::get_port(component.as_ref());
             for p in params {
                 let status = p.set_unsafe(port);
                 cst!(status, "unable to set parameter {} on {}", p.name(), Self::name())?;
@@ -490,10 +536,10 @@ pub trait ComponentPort {
         Ok(())
     }
 
-    fn read_multi<'p>(component: &ComponentHandle<Self::E>, params: impl Iterator<Item=&'p mut dyn ParamIO<Self>>) -> Result<()>
+    fn read_multi<'p>(component: impl AsRef<ComponentHandle<Self::E>>, params: impl Iterator<Item=&'p mut dyn ParamIO<Self>>) -> Result<()>
     where Self: 'p + Sized {
         unsafe { 
-            let port = Self::get_port(component);
+            let port = Self::get_port(component.as_ref());
             for p in params {
                 let status = p.get_unsafe(port);
                 cst!(status, "unable to get parameter {} on {}", p.name(), Self::name())?;
@@ -502,9 +548,9 @@ pub trait ComponentPort {
         Ok(())
     }
 
-    fn configure(h: &ComponentHandle<Self::E>, config: impl PortConfig) -> Result<()> {
+    fn configure(component: impl AsRef<ComponentHandle<Self::E>>, config: impl PortConfig) -> Result<()> {
         unsafe {
-            let p = Self::get_port(h);
+            let p = Self::get_port(component.as_ref());
             config.apply_format(p);
             let status = ffi::mmal_port_format_commit(p);
             cst!(status, "unable to commit format on {}", Self::name())?;
@@ -513,9 +559,9 @@ pub trait ComponentPort {
         }
     }
 
-    fn get_buffers_config(h: &ComponentHandle<Self::E>) -> ((u32, u32, u32), (u32, u32, u32)) {
+    fn get_buffers_config(component: &ComponentHandle<Self::E>) -> ((u32, u32, u32), (u32, u32, u32)) {
         unsafe {
-            let p = & *Self::get_port(h);
+            let p = & *Self::get_port(component.as_ref());
             (
                 (p.buffer_num, p.buffer_num_recommended, p.buffer_num_min),
                 (p.buffer_size, p.buffer_size_recommended, p.buffer_size_min)

@@ -2,7 +2,7 @@
 use std::{io::Write, pin::Pin, path::Path};
 use mmal_rs::*;
 
-use log::{error};
+use log::error;
 
 fn select_camera(print: bool) -> Result<CameraInstanceInfo> {
     let camera_info = CameraInfoComponentHandle::create()?;
@@ -27,21 +27,20 @@ fn wr<R>(l: &str, r: Result<R>) {
 }
 
 
+
 struct StillCamera {
-    camera: ComponentHandle<CameraEntity>,
-    encoder: ComponentHandle<EncoderEntity>,
+    camera: ComponentEnabler<CameraEntity>,
+    _encoder: ComponentEnabler<EncoderEntity>,
     connection: ConnectionHandle<CameraCapturePort, EncoderInputPort>,
     encoder_sink: Pin<Box<SinkAggregate<EncoderOutputPort>>>,
 }
 
 impl StillCamera {
 
-    fn create() -> Result<Self> {
-        let selected_camera = select_camera(true)?;
-
+    fn create_camera(selected_camera: &CameraInstanceInfo) -> Result<ComponentEnabler<CameraEntity>> {
         let camera = CameraComponentHandle::create()?;
         let camera_num = PCameraNum::from(0);
-        let camera_config = PCameraConfig::from_update(CameraConfig::from_instance_info(&selected_camera));
+        let camera_config = PCameraConfig::from_update(CameraConfig::from_instance_info(selected_camera));
         let camera_shutter_speed = PShutterSpeed::from(100_000);
                 /*
                 saturation: 50,
@@ -54,24 +53,32 @@ impl StillCamera {
         CameraControlPort::write_multi(&camera, 
             param_iter![&camera_num, &camera_config, &camera_shutter_speed])?;    
         CameraCapturePort::configure(&camera, CAMERA_PORT_CONFIG_320X240)?;
-        camera.enable()?;
+        ComponentEnabler::new(camera)
+    }
 
-
+    fn create_encoder() -> Result<ComponentEnabler<EncoderEntity>> {
         let encoder = EncoderComponentHandle::create()?;
     
         EncoderOutputPort::configure(&encoder, EncoderOutFormat::default())?;
         EncoderOutputPort::write(&encoder, &JpegQFactor::from(90))?;
         EncoderOutputPort::write(&encoder, &JpegRestartInterval::from(0))?;
-        encoder.enable()?;
-    
+        ComponentEnabler::new(encoder)
+    }
+
+    fn create() -> Result<Self> {
+        let selected_camera = select_camera(true)?;
+
+        let camera = Self::create_camera(&selected_camera)?;
+        let encoder = Self::create_encoder()?;
+
         let connection = 
             ConnectionHandle::<CameraCapturePort, EncoderInputPort>::create(&camera, &encoder)?;
         connection.enable()?;
 
-        let encoder_sink = SinkAggregate::<EncoderOutputPort>::create(encoder.clone())?;
+        let encoder_sink = SinkAggregate::<EncoderOutputPort>::create(encoder.as_ref().clone())?;
         encoder_sink.enable()?;
 
-        Ok(Self { camera, encoder, connection, encoder_sink })
+        Ok(Self { camera, _encoder: encoder, connection, encoder_sink })
     } 
 
     fn take_one_shot<P: AsRef<Path>>(&self, output_file: P) -> Result<()> {
@@ -81,7 +88,7 @@ impl StillCamera {
         let start = std::time::Instant::now();
 
         self.encoder_sink.feed_all()?;
-        CameraCapturePort::write(&self.camera, &PCapture::from(true))?;
+        CameraCapturePort::write(self.camera.as_ref(), &PCapture::from(true))?;
     
         while let Some(b) = self.encoder_sink.timedwait(5000) {
             let (_, is_terminal) = self.encoder_sink.consume(b, |flags, payload|{
@@ -101,22 +108,19 @@ impl Drop for StillCamera {
     fn drop(&mut self) {
         wr("encoder_sink.disable", self.encoder_sink.disable());
         wr("connection.disable", self.connection.disable());
-        wr("camera.disable", self.camera.disable());
-        wr("encoder.disable", self.encoder.disable());
     }
 }
 
 
 struct VideoCamera {
-    camera: ComponentHandle<CameraEntity>,
-    encoder: ComponentHandle<EncoderEntity>,
+    camera: ComponentEnabler<CameraEntity>,
+    _encoder: ComponentEnabler<EncoderEntity>,
     connection: ConnectionHandle<CameraVideoPort, EncoderInputPort>,
     encoder_sink: Pin<Box<SinkAggregate<EncoderOutputPort>>>,
 }
 
 impl VideoCamera {
-
-    fn create() -> Result<Self> {
+    fn create_camera() -> Result<ComponentEnabler<CameraEntity>> {
         let selected_camera = select_camera(true)?;
 
         let camera = CameraComponentHandle::create()?;
@@ -144,24 +148,32 @@ impl VideoCamera {
         vcfg.buffer_count_policy = BufferCountPolicy::Explicit(3);
         CameraVideoPort::configure(&camera, vcfg)?;
         println!("video buffers: {:?}", CameraVideoPort::get_buffers_config(&camera));
-        camera.enable()?;
+        ComponentEnabler::new(camera)
+    }
 
+    fn create_encoder() -> Result<ComponentEnabler<EncoderEntity>> {
         let encoder = EncoderComponentHandle::create()?;
     
         EncoderOutputPort::configure(&encoder, EncoderOutFormat::default())?;
         EncoderOutputPort::write(&encoder, &JpegQFactor::from(90))?;
         EncoderOutputPort::write(&encoder, &JpegRestartInterval::from(0))?;
         println!("encoder buffers: {:?}", EncoderOutputPort::get_buffers_config(&encoder));
-        encoder.enable()?;
+        ComponentEnabler::new(encoder)    
+    }
+
+    fn create() -> Result<Self> {
+        let camera = Self::create_camera()?;
+
+        let encoder = Self::create_encoder()?;
     
         let connection = 
             ConnectionHandle::<CameraVideoPort, EncoderInputPort>::create(&camera, &encoder)?;
         connection.enable()?;
 
-        let encoder_sink = SinkAggregate::<EncoderOutputPort>::create(encoder.clone())?;
+        let encoder_sink = SinkAggregate::<EncoderOutputPort>::create(encoder.inner().clone())?;
         encoder_sink.enable()?;
 
-        Ok(Self { camera, encoder, connection, encoder_sink })
+        Ok(Self { camera, _encoder: encoder, connection, encoder_sink })
     } 
 
 
@@ -185,7 +197,6 @@ impl VideoCamera {
         CameraVideoPort::write(&self.camera, &PCaptureVideo::from(true))?;
     
         while let Some(b) = self.encoder_sink.timedwait(5000) {
-
             if file_out.is_none() {
                 //let output_file_split = Path::file_name(&self) output_file.split();
                 let ofn = Self::add_file_number(&output_file, still_n);
@@ -196,7 +207,8 @@ impl VideoCamera {
                 file_out.as_mut().unwrap().write_all(payload).unwrap();
                 Ok((true, flags.is_terminal_frame()))
             })?;
-            if is_terminal { 
+            if is_terminal {
+                println!("time: {:?}", std::time::Instant::now()-start);
                 still_n += 1;
                 if still_n >= stills_count { break }
                 file_out = None;
@@ -212,8 +224,6 @@ impl Drop for VideoCamera {
     fn drop(&mut self) {
         wr("encoder_sink.disable", self.encoder_sink.disable());
         wr("capture_connection.disable", self.connection.disable());
-        wr("camera.disable", self.camera.disable());
-        wr("encoder.disable", self.encoder.disable());
     }
 }
 
