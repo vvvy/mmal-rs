@@ -61,7 +61,7 @@ impl<P, I> ParamIO<P> for Param<P, I> where
             let port = P::get_port(target);
             self.i.set_param(port)
         };
-        cst(status, || format!("Unable to set parameter {} on {}", I::name(), P::name()))
+        cst!(status, "Unable to set parameter {} on {}", I::name(), P::name())
     }
 
     fn read(&mut self, target: &ComponentHandle<P::E>) -> Result<()> {
@@ -69,7 +69,7 @@ impl<P, I> ParamIO<P> for Param<P, I> where
             let port = P::get_port(target);
             self.i.get_param(port)  
         };
-        cst(status, || format!("Unable to get parameter {} on {}", I::name(), P::name()))
+        cst!(status, "Unable to get parameter {} on {}", I::name(), P::name())
     }
 
     unsafe fn set_unsafe(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
@@ -124,11 +124,11 @@ macro_rules! enumize {
         #[repr(u32)]
         pub enum $enumid { $($int = ffi::$ext),+ }
         impl TryFrom<u32> for $enumid {
-            type Error = crate::error::MmalError; //TODO correct error
+            type Error = crate::error::MmalError;
             fn try_from(value: u32) -> Result<Self> {
                 match value {
                     $(ffi::$ext => Ok($enumid::$int),)+
-                    other => Err(MmalError::with_status(format!("Invalid value {} for {}", other, stringify!($enumid)), 0))
+                    other => Err(MmalError::no_status(format!("Invalid value {} for {}", other, stringify!($enumid))))
                 }
             }
         }

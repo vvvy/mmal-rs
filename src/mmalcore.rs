@@ -21,7 +21,7 @@ pub trait ComponentEntity: Entity { }
 /// 
 /// This is essentially a C-stype pointer with a companion type attached. Note that cloning the handle
 /// effectivelly copies the pointer and increases refcount of the underlying C struct. 
-pub struct ComponentHandle<E> {
+pub struct ComponentHandle<E: ComponentEntity> {
     c: NonNull<ffi::MMAL_COMPONENT_T>,
     t: PhantomData<E>
 }
@@ -31,7 +31,7 @@ impl<E: ComponentEntity> ComponentHandle<E> {
     pub(super) unsafe fn create_from(component_name: *const c_char) -> Result<Self> {
         let mut ptr = MaybeUninit::uninit();
         let status = ffi::mmal_component_create(component_name, ptr.as_mut_ptr());
-        cst(status, msgf("Unable to create component", E::name()))?;
+        cst!(status, "{}: Unable to create component", E::name())?;
         let ptr: *mut ffi::MMAL_COMPONENT_T = ptr.assume_init();
         let c = NonNull::new(ptr).unwrap();
         Ok(Self { c, t: PhantomData })
@@ -41,7 +41,7 @@ impl<E: ComponentEntity> ComponentHandle<E> {
         unsafe {
             if self.c.as_ref().is_enabled == 0 {
                 let status = ffi::mmal_component_enable(self.c.as_ptr());
-                cst(status, msgf("Unable to enable", E::name()))?;
+                cst!(status, "{}: unable to enable", E::name())?;
             }
         }
         Ok(())
@@ -51,7 +51,7 @@ impl<E: ComponentEntity> ComponentHandle<E> {
         unsafe {
             if self.c.as_ref().is_enabled != 0 {
                 let status = ffi::mmal_component_disable(self.c.as_ptr());
-                cst(status, msgf("Unable to disable", E::name()))?;
+                cst!(status, "{}: unable to disable", E::name())?;
             }
         }
         Ok(())
@@ -76,13 +76,13 @@ impl<E: ComponentEntity> ComponentHandle<E> {
     }*/
 }
 
-impl<E> Drop for ComponentHandle<E> {
+impl<E: ComponentEntity> Drop for ComponentHandle<E> {
     fn drop(&mut self) {
-        unsafe { ffi::mmal_component_destroy(self.c.as_ptr()); }
+        unsafe { log_deinit!(cst!(ffi::mmal_component_destroy(self.c.as_ptr()), "mmal_component_destroy({})", E::name())); }
     }
 }
 
-impl<E> Clone for ComponentHandle<E> {
+impl<E: ComponentEntity> Clone for ComponentHandle<E> {
     fn clone(&self) -> Self {
         unsafe { ffi::mmal_component_acquire(self.c.as_ptr()) }
         Self { c: self.c.clone(), t: self.t.clone() }
@@ -128,7 +128,7 @@ impl ComponentPort for NullSinkInputPort {
 
 //------------------------------------------------------------------------------------------------------------------------------
 
-pub struct ConnectionHandle<PS, PT> {
+pub struct ConnectionHandle<PS: ComponentPort, PT: ComponentPort> {
     c: NonNull<ffi::MMAL_CONNECTION_T>,
     source: PhantomData<PS>,
     target: PhantomData<PT>,
@@ -145,7 +145,7 @@ impl<PS: ComponentPort, PT: ComponentPort> ConnectionHandle<PS, PT> {
                 ffi::MMAL_CONNECTION_FLAG_TUNNELLING
                     | ffi::MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT,
             );
-            cst(status, || format!("Unable to create connection {}->{}", PS::name(), PT::name()))?;
+            cst!(status, "unable to create connection {}->{}", PS::name(), PT::name())?;
             let connection_ptr: *mut ffi::MMAL_CONNECTION_T = connection_ptr.assume_init();
             NonNull::new(connection_ptr).unwrap()         
         };
@@ -154,26 +154,27 @@ impl<PS: ComponentPort, PT: ComponentPort> ConnectionHandle<PS, PT> {
 
     pub fn enable(&self) -> Result<()> {
         let status = unsafe { ffi::mmal_connection_enable(self.c.as_ptr()) };
-        cst(status, || format!("Unable to enable connection {}->{}", PS::name(), PT::name()))?;
+        cst!(status, "unable to enable connection {}->{}", PS::name(), PT::name())?;
         Ok(())
     }
 
     pub fn disable(&self) -> Result<()> {
         let status = unsafe { ffi::mmal_connection_disable(self.c.as_ptr()) };
-        cst(status, || format!("Unable to disable connection {}->{}", PS::name(), PT::name()))?;
+        cst!(status, "unable to disable connection {}->{}", PS::name(), PT::name())?;
         Ok(())
     }
 }
 
-impl<PS, PT> Drop for ConnectionHandle<PS, PT> {
+impl<PS: ComponentPort, PT: ComponentPort> Drop for ConnectionHandle<PS, PT> {
     fn drop(&mut self) {
         unsafe {
-            ffi::mmal_connection_destroy(self.c.as_ptr());
+            log_deinit!(Result::<()>::Err(MmalError::no_status("test destroy m".to_owned())));
+            log_deinit!(cst!(ffi::mmal_connection_destroy(self.c.as_ptr()), "mmal_connection_destroy({}->{})", PS::name(), PT::name()));
         }
     }
 }
 
-impl<PS, PT> Clone for ConnectionHandle<PS, PT> {
+impl<PS: ComponentPort, PT: ComponentPort> Clone for ConnectionHandle<PS, PT> {
     fn clone(&self) -> Self {
         unsafe { ffi::mmal_connection_acquire(self.c.as_ptr()) }
         Self { c: self.c.clone(), source: self.source.clone(), target: self.target.clone() }
@@ -238,7 +239,7 @@ impl BufferRef {
     pub fn do_locked<R>(&self, mut f: impl FnMut(FrameFlags, &[u8]) -> Result<(bool, R)>) -> Result<(bool, R)> {
         unsafe {
             let flags = FrameFlags { flags: self.p.as_ref().flags };
-            cst(ffi::mmal_buffer_header_mem_lock(self.p.as_ptr()), || "could not lock buffer".to_owned())?;
+            cst!(ffi::mmal_buffer_header_mem_lock(self.p.as_ptr()), "could not lock buffer")?;
             let b = self.p.as_ref();
             let rv = f(
                 flags,
@@ -341,7 +342,7 @@ impl<P: ComponentPort> PortPoolHandle<P> {
             let buffer_ptr = ffi::mmal_queue_get(self.pool.as_ref().queue);
             if let Some(b) = NonNull::new(buffer_ptr) {
                 let status = ffi::mmal_port_send_buffer(self.port.as_ptr(), b.as_ptr());
-                cst(status, msgf("Could not send buffer", P::name()))
+                cst!(status, "{}: could not send buffer", P::name())
             } else {
                 // TODO this should be logged error, not fatal
                 Err(MmalError::no_status("Unable to feed a buffer - queue is empty".to_owned()))
@@ -353,7 +354,7 @@ impl<P: ComponentPort> PortPoolHandle<P> {
         unsafe {
             while let Some(b) = NonNull::new(ffi::mmal_queue_get(self.pool.as_ref().queue)) {
                 let status = ffi::mmal_port_send_buffer(self.port.as_ptr(), b.as_ptr());
-                cst(status, msgf("Could not send buffer", P::name()))?;
+                cst!(status, "{}: could not send buffer", P::name())?;
             }
             Ok(())
         }        
@@ -484,7 +485,7 @@ pub trait ComponentPort {
             let port = Self::get_port(component);
             for p in params {
                 let status = p.set_unsafe(port);
-                cst(status, || format!("Unable to set parameter {} on {}", p.name(), Self::name()))?;
+                cst!(status, "unable to set parameter {} on {}", p.name(), Self::name())?;
             }
         }
         Ok(())
@@ -496,7 +497,7 @@ pub trait ComponentPort {
             let port = Self::get_port(component);
             for p in params {
                 let status = p.get_unsafe(port);
-                cst(status, || format!("Unable to get parameter {} on {}", p.name(), Self::name()))?;
+                cst!(status, "unable to get parameter {} on {}", p.name(), Self::name())?;
             }
         }
         Ok(())
@@ -507,7 +508,7 @@ pub trait ComponentPort {
             let p = Self::get_port(h);
             config.apply_format(p);
             let status = ffi::mmal_port_format_commit(p);
-            cst(status, || format!("Unable to commit format on {}", Self::name()))?;
+            cst!(status, "unable to commit format on {}", Self::name())?;
             config.apply_buffer_policy(p);
             Ok(())
         }
@@ -571,7 +572,7 @@ impl<P: ComponentPort> SinkAggregate<P> {
         unsafe {
             (*port).userdata = self._self.as_ptr() as *mut ffi::MMAL_PORT_USERDATA_T;
             let status = ffi::mmal_port_enable(port, Some(Self::cb));
-            cst(status, msgf("Unable to enable", P::name()))?;
+            cst!(status, "{}: unable to enable", P::name())?;
         }
         Ok(())
     }
@@ -580,7 +581,7 @@ impl<P: ComponentPort> SinkAggregate<P> {
         let port = self.p.get_port();
         unsafe {
             let status = ffi::mmal_port_disable(port);
-            cst(status, msgf("Unable to disable", P::name()))?;
+            cst!(status, "{}: unable to disable", P::name())?;
             (*port).userdata = mem::zeroed();
         }
         Ok(())

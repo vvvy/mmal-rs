@@ -31,17 +31,5 @@ unsafe fn fix_encoding(port: *mut ffi::MMAL_PORT_T, encoding: u32) -> u32 {
     }
 }
 
-fn cst(status: MmalStatus, msg_f: impl FnOnce() -> String) -> Result<()> {
-    if status == ffi::MMAL_STATUS_T::MMAL_SUCCESS {
-        Ok(())
-    } else {
-        Err(MmalError::with_status(msg_f(), status).into())
-    }
-}
-
-fn msgf(message: &'static str, entity: &'static str) -> impl FnOnce() -> String {
-    || message.to_owned() + " " + entity
-}
-
 
 

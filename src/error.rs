@@ -45,3 +45,45 @@ impl std::error::Error for MmalError { }
 type StdResult<T, E> = std::result::Result<T, E>;
 pub type Result<T> = StdResult<T, MmalError>;
 
+
+pub(crate) fn convert_status(status: MmalStatus, msg_f: impl FnOnce() -> String) -> Result<()> {
+    if status == ffi::MMAL_STATUS_T::MMAL_SUCCESS {
+        Ok(())
+    } else {
+        Err(MmalError::with_status(msg_f(), status).into())
+    }
+}
+
+#[macro_export]
+macro_rules! cst {
+    ($status:expr, $s:literal) => {
+        convert_status($status, || $s.to_owned())
+    };
+    ($status:expr, $fmt:literal, $($a:expr),+) => {
+        convert_status($status, || format!($fmt, $($a),+))
+    };
+}
+
+pub(crate) fn err_log_eligible() -> bool {
+    std::env::var("MMAL_RS_ENABLE_LOG")
+    .map(|s| if let Some(w) = s.parse::<u8>().ok() { 
+        w != 0 
+    } else {
+        s == "true" || s == "yes"
+    }).unwrap_or(false)
+}
+
+#[macro_export]
+macro_rules! log_deinit {
+    ($result:expr) => {
+        if let Err(e) = $result {
+            if *crate::error::LOG_ERRORS.get_or_init(err_log_eligible) {
+                //TODO tracing or log
+                eprintln!("deinit error: {}", e);
+            }
+        }
+    };
+
+}
+
+pub(crate) const LOG_ERRORS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
