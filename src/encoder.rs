@@ -76,7 +76,7 @@ impl Default for EncoderOutFormat {
 impl PortConfig for EncoderOutFormat {
     unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T) {
         let format = &mut (*(*port).format);
-        format.encoding = fix_encoding(port, self.encoding);
+        format.encoding = self.encoding;
     }
 
     unsafe fn apply_buffer_policy(&self, port: *mut ffi::MMAL_PORT_T) {

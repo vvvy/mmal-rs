@@ -91,6 +91,8 @@ pub struct GenericPortConfig {
 impl PortConfig for GenericPortConfig {
     unsafe fn apply_format(&self, port: *mut ffi::MMAL_PORT_T) {
         let format = &mut (*(*port).format);
+        // On firmware prior to June 2016, camera and video_splitter
+        // had BGR24 and RGB24 support reversed.
         format.encoding = fix_encoding(port, self.encoding);
         format.encoding_variant = self.encoding_variant;
 
