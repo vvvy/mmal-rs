@@ -10,8 +10,8 @@ pub trait InnerParamType {
     fn name() -> &'static str;
 }
 
-pub trait UpdateFrom<T> {
-    fn update_from(&mut self, source: T);
+pub trait Apply<T> {
+    fn apply(&mut self, source: T);
 }
 
 /// A glue between an InnerParamType and a ComponentPort 
@@ -20,20 +20,20 @@ pub struct Param<P, I> {
     p: PhantomData<P>
 }
 
-impl<P, I> Param<P, I>
-{
+impl<P, I> Param<P, I> {
     pub fn new(value: I) -> Self { Self { i: value, p: PhantomData, } }
-    pub fn from<T: Into<I>>(value: T) -> Self { Self::new(value.into()) }
-    pub fn from_update<T>(value: T) -> Self where I: Default+UpdateFrom<T> { 
+    pub fn from_inner<T: Into<I>>(value: T) -> Self { Self::new(value.into()) }
+    pub fn from<T>(value: T) -> Self where I: Default+Apply<T> { 
         let mut i = I::default();
-        i.update_from(value);
+        i.apply(value);
         Self::new(i)
-     }
+    }
     pub fn inner(&self) -> &I { &self.i }
     pub fn inner_mut(&mut self) -> &mut I { &mut self.i }
-    pub fn get<'s, T>(&'s self) -> T where &'s I: Into<T> { (&self.i).into() }
-    pub fn set<T>(&mut self, t: T) where T: Into<I> { self.i = t.into() }
-    pub fn update_from<T>(&mut self, source: T) where I: UpdateFrom<T> { self.i.update_from(source) }
+    pub fn get<'s, T>(&'s self) -> T where T: From<&'s I> { (&self.i).into() }
+    pub fn try_get<'s, T>(&'s self) -> Result<T> where T: TryFrom<&'s I, Error = MmalError> { (&self.i).try_into() }
+    pub fn set_inner<T>(&mut self, t: T) where T: Into<I> { self.i = t.into() }
+    pub fn set<T>(&mut self, source: T) where I: Apply<T> { self.i.apply(source) }
     pub fn into<T: From<I>>(self) -> I { self.i.into() }
 }
 
@@ -139,13 +139,24 @@ macro_rules! enumize {
 #[macro_export]
 macro_rules! enumerated_inner_type {
     ($typeid:ident, $enumid:ident, $ffitype:ident, $ffitypeid:ident) => {
+        enumerated_inner_type!{$typeid, $enumid, $ffitype, $ffitypeid, value}
+    };
+
+    ($typeid:ident, $enumid:ident, $ffitype:ident, $ffitypeid:ident, $valuefield:ident) => {
         pub struct $typeid {
             inner: ffi::$ffitype
         }
         
-        impl UpdateFrom<$enumid> for $typeid {
-            fn update_from(&mut self, source: $enumid) {
-                self.inner.value = source as u32
+        impl Apply<$enumid> for $typeid {
+            fn apply(&mut self, source: $enumid) {
+                self.inner.$valuefield = source as u32
+            }
+        }
+
+        impl TryFrom<&$typeid> for $enumid {
+            type Error = MmalError;
+            fn try_from(a: &$typeid) -> Result<$enumid> {
+                a.inner.$valuefield.try_into()
             }
         }
 
@@ -170,6 +181,17 @@ macro_rules! enumerated_inner_type {
             fn name() -> &'static str { stringify!($enumid) }
         }
     };
+}
+
+///Initializes a empty parameter struct
+#[macro_export]
+macro_rules! mmal_param_init {
+    ($ty:ident, $id:ident) => { {
+        let mut cfg: ffi::$ty = unsafe { mem::zeroed() };
+        cfg.hdr.id = ffi::$id as u32;
+        cfg.hdr.size = mem::size_of::<ffi::$ty>() as u32;
+        cfg
+    } };
 }
 
 
@@ -219,6 +241,12 @@ impl<IDP: ParId> InnerParamType for Rational<IDP> {
     fn name() -> &'static str { IDP::name() }
 }
 
+impl<IDP> Apply<(i32, i32)> for Rational<IDP> {
+    fn apply(&mut self, source: (i32, i32)) {
+        self.set(source)
+    }
+}
+
 
 pub struct Uint32<IDP> { inner: u32, _d: PhantomData<IDP> }
 
@@ -252,6 +280,18 @@ impl<IDP> From<u32> for Uint32<IDP> {
 
 impl<IDP> From<&Uint32<IDP>> for u32 {
     fn from(value: &Uint32<IDP>) -> Self { value.inner }
+}
+
+impl<IDP> Default for Uint32<IDP> {
+    fn default() -> Self {
+        Self { inner: Default::default(), _d: Default::default() }
+    }
+}
+
+impl<IDP> Apply<u32> for Uint32<IDP> {
+    fn apply(&mut self, source: u32) {
+        self.set(source)
+    }
 }
 
 
@@ -290,6 +330,17 @@ impl<IDP: ParId> From<&Int32<IDP>> for i32 {
     fn from(value: &Int32<IDP>) -> Self { value.inner }
 }
 
+impl<IDP> Default for Int32<IDP> {
+    fn default() -> Self {
+        Self { inner: Default::default(), _d: Default::default() }
+    }
+}
+
+impl<IDP> Apply<i32> for Int32<IDP> {
+    fn apply(&mut self, source: i32) {
+        self.set(source)
+    }
+}
 
 
 pub struct Boolean<IDP> { inner: bool, _d: PhantomData<IDP> }
@@ -332,3 +383,14 @@ impl<IDP> From<&Boolean<IDP>> for bool {
     fn from(value: &Boolean<IDP>) -> Self { value.inner }
 }
 
+impl<IDP> Default for Boolean<IDP> {
+    fn default() -> Self {
+        Self { inner: Default::default(), _d: Default::default() }
+    }
+}
+
+impl<IDP> Apply<bool> for Boolean<IDP> {
+    fn apply(&mut self, source: bool) {
+        self.set(source)
+    }
+}

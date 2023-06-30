@@ -240,7 +240,7 @@ impl ComponentPort for CameraCapturePort {
         component.output_port_n(CameraOutputPort::Capture as isize)
     }
 
-    fn name() -> &'static str { "camera video port" }
+    fn name() -> &'static str { "camera capture port" }
 }
 
 
@@ -342,9 +342,13 @@ impl InnerParamType for CameraConfigInnerType {
     }
 }
 
-impl UpdateFrom<CameraConfig> for CameraConfigInnerType {
-    fn update_from(&mut self, source: CameraConfig) {
-        fn cbool(w: bool) -> u32 { if w { ffi::MMAL_TRUE } else { ffi::MMAL_FALSE } }
+
+pub fn bool_rust_to_mmal(w: bool) -> u32 { if w { ffi::MMAL_TRUE } else { ffi::MMAL_FALSE } }
+pub fn bool_mmal_to_rust(w: u32) -> bool { w != ffi::MMAL_FALSE }
+
+impl Apply<CameraConfig> for CameraConfigInnerType {
+    fn apply(&mut self, source: CameraConfig) {
+        let cbool = bool_rust_to_mmal;
         let mut cfg = &mut self.inner;
         cfg.max_stills_w = source.max_stills_w;
         cfg.max_stills_h = source.max_stills_h;
@@ -361,7 +365,7 @@ impl UpdateFrom<CameraConfig> for CameraConfigInnerType {
 
 impl From<&CameraConfigInnerType> for CameraConfig {
     fn from(value: &CameraConfigInnerType) -> Self {
-        fn cbool(w: u32) -> bool { w != ffi::MMAL_FALSE }
+        let cbool = bool_mmal_to_rust;
         Self {
             max_stills_w: value.inner.max_stills_w,
             max_stills_h: value.inner.max_stills_h,
@@ -415,22 +419,8 @@ pub type PCameraNum = Param<CameraControlPort, Int32<MMAL_PARAMETER_CAMERA_NUM>>
 idp!{MMAL_PARAMETER_CAPTURE}
 /// Activate/deactivate capture
 pub type PCapture = Param<CameraCapturePort, Boolean<MMAL_PARAMETER_CAPTURE>>;
+/// Activate/deactivate capture
 pub type PCaptureVideo = Param<CameraVideoPort, Boolean<MMAL_PARAMETER_CAPTURE>>;
-
-/*
-   result += raspicamcontrol_set_exposure_mode(camera, params->exposureMode);
-int raspicamcontrol_set_exposure_mode(MMAL_COMPONENT_T *camera, MMAL_PARAM_EXPOSUREMODE_T mode)
-Set exposure mode for images
-
-Parameters:
-camera – Pointer to camera component
-mode – Exposure mode to set from 
-    - MMAL_PARAM_EXPOSUREMODE_OFF, - MMAL_PARAM_EXPOSUREMODE_AUTO, - MMAL_PARAM_EXPOSUREMODE_NIGHT, 
-    - MMAL_PARAM_EXPOSUREMODE_NIGHTPREVIEW, - MMAL_PARAM_EXPOSUREMODE_BACKLIGHT, - MMAL_PARAM_EXPOSUREMODE_SPOTLIGHT, 
-    - MMAL_PARAM_EXPOSUREMODE_SPORTS, - MMAL_PARAM_EXPOSUREMODE_SNOW, - MMAL_PARAM_EXPOSUREMODE_BEACH, 
-    - MMAL_PARAM_EXPOSUREMODE_VERYLONG, - MMAL_PARAM_EXPOSUREMODE_FIXEDFPS, - MMAL_PARAM_EXPOSUREMODE_ANTISHAKE, 
-    - MMAL_PARAM_EXPOSUREMODE_FIREWORKS,
- */
 
 enumize!{ExposureMode,
     Off => MMAL_PARAM_EXPOSUREMODE_T_MMAL_PARAM_EXPOSUREMODE_OFF,
@@ -447,25 +437,27 @@ enumize!{ExposureMode,
     AntiShake => MMAL_PARAM_EXPOSUREMODE_T_MMAL_PARAM_EXPOSUREMODE_ANTISHAKE,
     Fireworks => MMAL_PARAM_EXPOSUREMODE_T_MMAL_PARAM_EXPOSUREMODE_FIREWORKS
 }
-
 enumerated_inner_type!{ExposureModeInnerType, ExposureMode, MMAL_PARAMETER_EXPOSUREMODE_T, MMAL_PARAMETER_EXPOSURE_MODE}
 idp!{MMAL_PARAMETER_EXPOSURE_MODE}
-/// Exposure mode
-pub type PExposureMode = Param<CameraCapturePort, ExposureModeInnerType>;
-
-
-/*
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_metering_mode(camera, params->exposureMeterMode);
-int raspicamcontrol_set_metering_mode(MMAL_COMPONENT_T *camera, MMAL_PARAM_EXPOSUREMETERINGMODE_T m_mode)
-Adjust the metering mode for images
-
-Parameters:
-camera – Pointer to camera component
-saturation – Value from following 
-    - MMAL_PARAM_EXPOSUREMETERINGMODE_AVERAGE, - MMAL_PARAM_EXPOSUREMETERINGMODE_SPOT, - MMAL_PARAM_EXPOSUREMETERINGMODE_BACKLIT, 
-    - MMAL_PARAM_EXPOSUREMETERINGMODE_MATRIX
-*/
+/// Set exposure mode for images
+/// 
+/// Native type: `MMAL_PARAM_EXPOSUREMODE_T`
+/// 
+/// mode: Exposure mode to set from 
+/// * MMAL_PARAM_EXPOSUREMODE_OFF
+/// * MMAL_PARAM_EXPOSUREMODE_AUTO
+/// * MMAL_PARAM_EXPOSUREMODE_NIGHT
+/// * MMAL_PARAM_EXPOSUREMODE_NIGHTPREVIEW
+/// * MMAL_PARAM_EXPOSUREMODE_BACKLIGHT
+/// * MMAL_PARAM_EXPOSUREMODE_SPOTLIGHT
+/// * MMAL_PARAM_EXPOSUREMODE_SPORTS
+/// * MMAL_PARAM_EXPOSUREMODE_SNOW
+/// * MMAL_PARAM_EXPOSUREMODE_BEACH
+/// * MMAL_PARAM_EXPOSUREMODE_VERYLONG
+/// * MMAL_PARAM_EXPOSUREMODE_FIXEDFPS
+/// * MMAL_PARAM_EXPOSUREMODE_ANTISHAKE
+/// * MMAL_PARAM_EXPOSUREMODE_FIREWORKS
+pub type PExposureMode = Param<CameraControlPort, ExposureModeInnerType>;
 
 enumize!{ExposureMeteringMode,
     Average => MMAL_PARAM_EXPOSUREMETERINGMODE_T_MMAL_PARAM_EXPOSUREMETERINGMODE_AVERAGE,
@@ -473,131 +465,411 @@ enumize!{ExposureMeteringMode,
     Backlit => MMAL_PARAM_EXPOSUREMETERINGMODE_T_MMAL_PARAM_EXPOSUREMETERINGMODE_BACKLIT, 
     Matrix => MMAL_PARAM_EXPOSUREMETERINGMODE_T_MMAL_PARAM_EXPOSUREMETERINGMODE_MATRIX
 }
-
 enumerated_inner_type!{ExposureMeteringModeInnerType, ExposureMeteringMode, MMAL_PARAMETER_EXPOSUREMETERINGMODE_T, 
     MMAL_PARAMETER_EXP_METERING_MODE}
-
 idp!{MMAL_PARAMETER_EXP_METERING_MODE}
-/// Exposure mode
-pub type PExposureMeteringMode = Param<CameraCapturePort, ExposureMeteringModeInnerType>;
+/// Adjust the metering mode for images
+/// 
+/// Native type: `MMAL_PARAM_EXPOSUREMETERINGMODE_T`
+/// 
+/// saturation – Value from following:
+/// 
+/// * MMAL_PARAM_EXPOSUREMETERINGMODE_AVERAGE
+/// * MMAL_PARAM_EXPOSUREMETERINGMODE_SPOT
+/// * MMAL_PARAM_EXPOSUREMETERINGMODE_BACKLIT
+/// * MMAL_PARAM_EXPOSUREMETERINGMODE_MATRIX
+pub type PExposureMeteringMode = Param<CameraControlPort, ExposureMeteringModeInnerType>;
+
+idp!{MMAL_PARAMETER_EXPOSURE_COMP}
+/// Adjust the exposure compensation for images (EV)
+/// exp_comp – Value to adjust, -10 to +10
+pub type PExposureCompensation = Param<CameraControlPort, Uint32<MMAL_PARAMETER_EXPOSURE_COMP>>;
 
 
-// TODO implement all the following parameters
-
-            /*
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_exposure_compensation(camera, params->exposureCompensation);
-int raspicamcontrol_set_exposure_compensation(MMAL_COMPONENT_T *camera, int exp_comp)
-Adjust the exposure compensation for images (EV)
-
-Parameters:
-camera – Pointer to camera component
-exp_comp – Value to adjust, -10 to +10
-
-Returns:
-0 if successful, non-zero if any parameters out of range
-
-
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_awb_mode(camera, params->awbMode);
-int raspicamcontrol_set_awb_mode(MMAL_COMPONENT_T *camera, MMAL_PARAM_AWBMODE_T awb_mode)
-Set the aWB (auto white balance) mode for images
-
-Parameters:
-camera – Pointer to camera component
-awb_mode – Value to set from 
-    - MMAL_PARAM_AWBMODE_OFF, - MMAL_PARAM_AWBMODE_AUTO, - MMAL_PARAM_AWBMODE_SUNLIGHT, 
-    - MMAL_PARAM_AWBMODE_CLOUDY, - MMAL_PARAM_AWBMODE_SHADE, - MMAL_PARAM_AWBMODE_TUNGSTEN, 
-    - MMAL_PARAM_AWBMODE_FLUORESCENT, - MMAL_PARAM_AWBMODE_INCANDESCENT, - MMAL_PARAM_AWBMODE_FLASH, 
-    - MMAL_PARAM_AWBMODE_HORIZON,
-
-Returns:
-0 if successful, non-zero if any parameters out of range
-
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_awb_gains(camera, params->awb_gains_r, params->awb_gains_b);
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_imageFX(camera, params->imageEffect);
-int raspicamcontrol_set_imageFX(MMAL_COMPONENT_T *camera, MMAL_PARAM_IMAGEFX_T imageFX)
-Set the image effect for the images
-
-Parameters:
-camera – Pointer to camera component
-imageFX – Value from - MMAL_PARAM_IMAGEFX_NONE, - MMAL_PARAM_IMAGEFX_NEGATIVE, - MMAL_PARAM_IMAGEFX_SOLARIZE, - MMAL_PARAM_IMAGEFX_POSTERIZE, - MMAL_PARAM_IMAGEFX_WHITEBOARD, - MMAL_PARAM_IMAGEFX_BLACKBOARD, - MMAL_PARAM_IMAGEFX_SKETCH, - MMAL_PARAM_IMAGEFX_DENOISE, - MMAL_PARAM_IMAGEFX_EMBOSS, - MMAL_PARAM_IMAGEFX_OILPAINT, - MMAL_PARAM_IMAGEFX_HATCH, - MMAL_PARAM_IMAGEFX_GPEN, - MMAL_PARAM_IMAGEFX_PASTEL, - MMAL_PARAM_IMAGEFX_WATERCOLOUR, - MMAL_PARAM_IMAGEFX_FILM, - MMAL_PARAM_IMAGEFX_BLUR, - MMAL_PARAM_IMAGEFX_SATURATION, - MMAL_PARAM_IMAGEFX_COLOURSWAP, - MMAL_PARAM_IMAGEFX_WASHEDOUT, - MMAL_PARAM_IMAGEFX_POSTERISE, - MMAL_PARAM_IMAGEFX_COLOURPOINT, - MMAL_PARAM_IMAGEFX_COLOURBALANCE, - MMAL_PARAM_IMAGEFX_CARTOON,
-
-Returns:
-0 if successful, non-zero if any parameters out of range
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_colourFX(camera, &params->colourEffects);
-int raspicamcontrol_set_colourFX(MMAL_COMPONENT_T *camera, const MMAL_PARAM_COLOURFX_T *colourFX)
-Set the colour effect for images (Set UV component)
-
-Parameters:
-camera – Pointer to camera component
-colourFX – Contains enable state and U and V numbers to set (e.g. 128,128 = Black and white)
-
-Returns:
-0 if successful, non-zero if any parameters out of range
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_rotation(camera, params->rotation);
-int raspicamcontrol_set_rotation(MMAL_COMPONENT_T *camera, int rotation)
-Set the rotation of the image
-
-Parameters:
-camera – Pointer to camera component
-rotation – Degree of rotation (any number, but will be converted to 0,90,180 or 270 only)
-
-Returns:
-0 if successful, non-zero if any parameters out of range
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_flips(camera, params->hflip, params->vflip);
-int raspicamcontrol_set_flips(MMAL_COMPONENT_T *camera, int hflip, int vflip)
-Set the flips state of the image
-
-Parameters:
-camera – Pointer to camera component
-hflip – If true, horizontally flip the image
-vflip – If true, vertically flip the image
-
-Returns:
-0 if successful, non-zero if any parameters out of range
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_ROI(camera, params->roi);
-int raspicamcontrol_set_ROI(MMAL_COMPONENT_T *camera, PARAM_FLOAT_RECT_T rect)
-Set the ROI of the sensor to use for captures/preview
-
-Parameters:
-camera – Pointer to camera component
-rect – Normalised coordinates of ROI rectangle
-
-Returns:
-0 if successful, non-zero if any parameters out of range
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_shutter_speed(camera, params->shutter_speed);
-int raspicamcontrol_set_shutter_speed(MMAL_COMPONENT_T *camera, int speed)
-Adjust the exposure time used for images
-
-Parameters:
-camera – Pointer to camera component
-shutter – speed in microseconds
-
-Returns:
-0 if successful, non-zero if any parameters out of range
+enumize!{AwbMode,
+    Off => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_OFF, 
+    Auto => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_AUTO, 
+    Sunlight => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_SUNLIGHT, 
+    Cloudy => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_CLOUDY, 
+    Shade => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_SHADE, 
+    Tungsten => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_TUNGSTEN, 
+    Fluorescent => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_FLUORESCENT, 
+    Incadescent => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_INCANDESCENT, 
+    Flash => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_FLASH, 
+    Horizon => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_HORIZON
+}
+enumerated_inner_type!{AwbModeInnerType, AwbMode, MMAL_PARAMETER_AWBMODE_T, MMAL_PARAMETER_AWB_MODE}
+idp!{MMAL_PARAMETER_AWB_MODE}
+/// Set the aWB (auto white balance) mode for images
+/// 
+/// Native type: MMAL_PARAMETER_AWBMODE_T
+/// 
+/// awb_mode – Value to set from
+/// * MMAL_PARAM_AWBMODE_OFF
+/// * MMAL_PARAM_AWBMODE_AUTO
+/// * MMAL_PARAM_AWBMODE_SUNLIGHT
+/// * MMAL_PARAM_AWBMODE_CLOUDY
+/// * MMAL_PARAM_AWBMODE_SHADE
+/// * MMAL_PARAM_AWBMODE_TUNGSTEN
+/// * MMAL_PARAM_AWBMODE_FLUORESCENT
+/// * MMAL_PARAM_AWBMODE_INCANDESCENT
+/// * MMAL_PARAM_AWBMODE_FLASH
+/// * MMAL_PARAM_AWBMODE_HORIZON
+pub type PAwbMode = Param<CameraControlPort, AwbModeInnerType>;
 
 
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_DRC(camera, params->drc_level);
-int raspicamcontrol_set_DRC(MMAL_COMPONENT_T *camera, MMAL_PARAMETER_DRC_STRENGTH_T strength)
-Adjust the Dynamic range compression level
+pub struct AwbGainsInnerType {
+    inner: ffi::MMAL_PARAMETER_AWB_GAINS_T,
+}
 
-Parameters:
-camera – Pointer to camera component
-strength – Strength of DRC to apply MMAL_PARAMETER_DRC_STRENGTH_OFF MMAL_PARAMETER_DRC_STRENGTH_LOW MMAL_PARAMETER_DRC_STRENGTH_MEDIUM MMAL_PARAMETER_DRC_STRENGTH_HIGH
+impl AwbGainsInnerType {
+    pub fn set(&mut self, r_gain: f64, b_gain: f64) {
+        const C: i32 = 0x1_0000;
+        self.inner.r_gain.num = (r_gain * C as f64) as i32;
+        self.inner.r_gain.den = C;
 
-Returns:
-0 if successful, non-zero if any parameters out of range
+        self.inner.b_gain.num = (b_gain * C as f64) as i32;
+        self.inner.b_gain.den = C;
+    }
 
----------------------------------------------------------------------------------------------------------------
-   result += raspicamcontrol_set_stats_pass(camera, params->stats_pass);
-             */
+    pub fn new(r_gain: f64, b_gain: f64) -> Self {
+        let mut rv = Self::default();
+        rv.set(r_gain, b_gain);
+        rv
+    }
+}
 
+impl Default for AwbGainsInnerType {
+    fn default() -> Self { 
+        let mut cfg: ffi::MMAL_PARAMETER_AWB_GAINS_T = unsafe { mem::zeroed() };
+        cfg.hdr.id = ffi::MMAL_PARAMETER_CUSTOM_AWB_GAINS as u32;
+        cfg.hdr.size = mem::size_of::<ffi::MMAL_PARAMETER_AWB_GAINS_T>() as u32;
+        Self { inner: cfg }
+    }
+}
+
+impl InnerParamType for AwbGainsInnerType {
+    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
+    }
+
+    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
+    }
+
+    fn name() -> &'static str { "AwbGainsInnerType" }
+}
+
+impl Apply<(f64, f64)> for AwbGainsInnerType {
+    fn apply(&mut self, (r_gain, b_gain): (f64, f64)) {
+        self.set(r_gain, b_gain)
+    }
+}
+
+impl Into<(f64, f64)> for &'_ AwbGainsInnerType {
+    fn into(self) -> (f64, f64) {
+        (self.inner.r_gain.num as f64/self.inner.r_gain.den as f64,
+        self.inner.b_gain.num as f64/self.inner.b_gain.den as f64
+        )
+    }
+}
+
+/// aWB gains - (r, b)
+pub type PAwbGains = Param<CameraControlPort, AwbGainsInnerType>;
+
+
+enumize!{ImageFX,
+    None => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_NONE,
+    Negative => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_NEGATIVE,
+    Solarize => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_SOLARIZE,
+    Posterize => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_POSTERIZE,
+    Whiteboard => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_WHITEBOARD,
+    BlackBoard => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_BLACKBOARD,
+    Sketch => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_SKETCH,
+    Denoise => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_DENOISE, 
+    Emboss => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_EMBOSS, 
+    OilPaint => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_OILPAINT, 
+    Hatch => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_HATCH,
+    Gpen => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_GPEN,
+    Pastel => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_PASTEL,
+    WaterColour => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_WATERCOLOUR,
+    Film => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_FILM,
+    Blur => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_BLUR,
+    Saturation => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_SATURATION,
+    ColourSwap => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_COLOURSWAP,
+    WashedOut => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_WASHEDOUT,
+    Posterise => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_POSTERISE,
+    ColourPoint => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_COLOURPOINT,
+    ColourBalance => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_COLOURBALANCE,
+    Cartoon => MMAL_PARAM_IMAGEFX_T_MMAL_PARAM_IMAGEFX_CARTOON
+}
+enumerated_inner_type!{ImageFXInnerType, ImageFX, MMAL_PARAMETER_IMAGEFX_T, MMAL_PARAMETER_IMAGE_EFFECT}
+idp!{MMAL_PARAMETER_IMAGE_EFFECT}
+/// Set the image effect for the images
+/// 
+/// imageFX – Value from
+/// * MMAL_PARAM_IMAGEFX_NONE
+/// * MMAL_PARAM_IMAGEFX_NEGATIVE
+/// * MMAL_PARAM_IMAGEFX_SOLARIZE
+/// * MMAL_PARAM_IMAGEFX_POSTERIZE
+/// * MMAL_PARAM_IMAGEFX_WHITEBOARD
+/// * MMAL_PARAM_IMAGEFX_BLACKBOARD
+/// * MMAL_PARAM_IMAGEFX_SKETCH
+/// * MMAL_PARAM_IMAGEFX_DENOISE
+/// * MMAL_PARAM_IMAGEFX_EMBOSS
+/// * MMAL_PARAM_IMAGEFX_OILPAINT
+/// * MMAL_PARAM_IMAGEFX_HATCH
+/// * MMAL_PARAM_IMAGEFX_GPEN
+/// * MMAL_PARAM_IMAGEFX_PASTEL
+/// * MMAL_PARAM_IMAGEFX_WATERCOLOUR
+/// * MMAL_PARAM_IMAGEFX_FILM
+/// * MMAL_PARAM_IMAGEFX_BLUR
+/// * MMAL_PARAM_IMAGEFX_SATURATION
+/// * MMAL_PARAM_IMAGEFX_COLOURSWAP
+/// * MMAL_PARAM_IMAGEFX_WASHEDOUT
+/// * MMAL_PARAM_IMAGEFX_POSTERISE
+/// * MMAL_PARAM_IMAGEFX_COLOURPOINT
+/// * MMAL_PARAM_IMAGEFX_COLOURBALANCE
+/// * MMAL_PARAM_IMAGEFX_CARTOON
+pub type PImageFX = Param<CameraControlPort, ImageFXInnerType>;
+
+
+pub struct ColourFxInnerType {
+    inner: ffi::MMAL_PARAMETER_COLOURFX_T,
+}
+
+impl ColourFxInnerType {
+    pub fn set(&mut self, enable: bool, u: u32, v: u32) {
+        self.inner.enable = bool_rust_to_mmal(enable) as i32;
+        self.inner.u = u; 
+        self.inner.v = v;
+    }
+
+    pub fn new(enable: bool, u: u32, v: u32) -> Self {
+        let mut rv = Self::default();
+        rv.set(enable, u, v);
+        rv
+    }
+}
+
+impl Default for ColourFxInnerType {
+    fn default() -> Self { 
+        let mut cfg: ffi::MMAL_PARAMETER_COLOURFX_T = unsafe { mem::zeroed() };
+        cfg.hdr.id = ffi::MMAL_PARAMETER_COLOUR_EFFECT as u32;
+        cfg.hdr.size = mem::size_of::<ffi::MMAL_PARAMETER_COLOURFX_T>() as u32;
+        Self { inner: cfg }
+    }
+}
+
+impl InnerParamType for ColourFxInnerType {
+    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
+    }
+
+    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
+    }
+
+    fn name() -> &'static str { "ColourFxInnerType" }
+}
+
+impl Apply<(bool, u32, u32)> for ColourFxInnerType {
+    fn apply(&mut self, (enable, u, v): (bool, u32, u32)) {
+        self.set(enable, u, v);
+    }
+}
+
+impl Into<(bool, u32, u32)> for &'_ ColourFxInnerType {
+    fn into(self) -> (bool, u32, u32) {
+        (bool_mmal_to_rust(self.inner.enable as u32), self.inner.u, self.inner.v)
+    }
+}
+
+/// Set the colour effect for images (Set UV component)
+/// 
+/// colourFX – Contains enable state and U and V numbers to set (e.g. 128,128 = Black and white)
+pub type PColourFX = Param<CameraControlPort, ColourFxInnerType>;
+
+
+#[repr(i32)]
+pub enum Rotation {
+    R0 = 0,
+    R90 = 90,
+    R180 = 180,
+    R270 = 270
+}
+idp!{MMAL_PARAMETER_ROTATION}
+/// Degree of rotation, must be one of: 0,90,180 or 270
+pub type PRotationVideo = Param<CameraVideoPort, Int32<MMAL_PARAMETER_ROTATION>>;
+/// Degree of rotation, must be one of: 0,90,180 or 270
+pub type PRotationPreview = Param<CameraPreviewPort, Int32<MMAL_PARAMETER_ROTATION>>;
+/// Degree of rotation, must be one of: 0,90,180 or 270
+pub type PRotationCapture = Param<CameraCapturePort, Int32<MMAL_PARAMETER_ROTATION>>;
+
+
+enumize!{Mirror,
+    None => MMAL_PARAM_MIRROR_T_MMAL_PARAM_MIRROR_NONE,
+    Both => MMAL_PARAM_MIRROR_T_MMAL_PARAM_MIRROR_BOTH,
+    Horizontal => MMAL_PARAM_MIRROR_T_MMAL_PARAM_MIRROR_HORIZONTAL,
+    Vertical => MMAL_PARAM_MIRROR_T_MMAL_PARAM_MIRROR_VERTICAL
+}
+enumerated_inner_type!{MirrorInnerType, Mirror, MMAL_PARAMETER_MIRROR_T, MMAL_PARAMETER_MIRROR}
+idp!{MMAL_PARAMETER_MIRROR}
+/// Set the mirroring state of the image
+pub type PMirrorVideo = Param<CameraVideoPort, MirrorInnerType>;
+/// Set the mirroring state of the image
+pub type PMirrorPreview = Param<CameraPreviewPort, MirrorInnerType>;
+/// Set the mirroring state of the image
+pub type PMirrorCapture = Param<CameraCapturePort, MirrorInnerType>;
+
+
+pub struct CropInnerType {
+    inner: ffi::MMAL_PARAMETER_INPUT_CROP_T,
+}
+
+impl CropInnerType {
+    pub fn set(&mut self, (x, width): (i32, i32), (y, height): (i32, i32)) {
+        self.inner.rect.x = x;
+        self.inner.rect.width = width;
+        self.inner.rect.y = y;
+        self.inner.rect.height = height;
+    }
+
+    pub fn new(xw: (i32, i32), yh: (i32, i32)) -> Self {
+        let mut rv = Self::default();
+        rv.set(xw, yh);
+        rv
+    }
+}
+
+impl Default for CropInnerType {
+    fn default() -> Self { 
+        let mut cfg: ffi::MMAL_PARAMETER_INPUT_CROP_T = unsafe { mem::zeroed() };
+        cfg.hdr.id = ffi::MMAL_PARAMETER_INPUT_CROP as u32;
+        cfg.hdr.size = mem::size_of::<ffi::MMAL_PARAMETER_INPUT_CROP_T>() as u32;
+        Self { inner: cfg }
+    }
+}
+
+impl InnerParamType for CropInnerType {
+    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
+    }
+
+    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
+    }
+
+    fn name() -> &'static str { "ColourFxInnerType" }
+}
+
+impl Apply<((i32, i32), (i32, i32))> for CropInnerType {
+    fn apply(&mut self, (xw, yh): ((i32, i32), (i32, i32))) {
+        self.set(xw, yh);
+    }
+}
+
+impl Into<((i32, i32), (i32, i32))> for &'_ CropInnerType {
+    fn into(self) -> ((i32, i32), (i32, i32)) {
+        (
+            (self.inner.rect.x, self.inner.rect.width),
+            (self.inner.rect.y, self.inner.rect.height)
+        )
+    }
+}
+
+///Set the ROI of the sensor to use for captures/preview
+pub type PROI = Param<CameraControlPort, MirrorInnerType>;
+
+enumize!{DRC,
+    Off => MMAL_PARAMETER_DRC_STRENGTH_T_MMAL_PARAMETER_DRC_STRENGTH_OFF,
+    Low => MMAL_PARAMETER_DRC_STRENGTH_T_MMAL_PARAMETER_DRC_STRENGTH_LOW,
+    Medium => MMAL_PARAMETER_DRC_STRENGTH_T_MMAL_PARAMETER_DRC_STRENGTH_MEDIUM,
+    High => MMAL_PARAMETER_DRC_STRENGTH_T_MMAL_PARAMETER_DRC_STRENGTH_HIGH
+}
+enumerated_inner_type!{DRCInnerType, DRC, MMAL_PARAMETER_DRC_T, MMAL_PARAMETER_DYNAMIC_RANGE_COMPRESSION, strength}
+idp!{MMAL_PARAMETER_DYNAMIC_RANGE_COMPRESSION}
+/// Adjust the Dynamic range compression level
+pub type PDRC = Param<CameraControlPort, DRCInnerType>;
+
+idp!{MMAL_PARAMETER_CAPTURE_STATS_PASS}
+/// Stats pass
+pub type PStatsPass = Param<CameraControlPort, Boolean<MMAL_PARAMETER_CAPTURE_STATS_PASS>>;
+
+
+pub struct StereoModeInnerType {
+    inner: ffi::MMAL_PARAMETER_STEREOSCOPIC_MODE_T,
+}
+
+/*
+typedef enum MMAL_STEREOSCOPIC_MODE_T {
+   MMAL_STEREOSCOPIC_MODE_NONE = 0,
+   MMAL_STEREOSCOPIC_MODE_SIDE_BY_SIDE = 1,
+   MMAL_STEREOSCOPIC_MODE_TOP_BOTTOM = 2,
+   MMAL_STEREOSCOPIC_MODE_MAX = 0x7FFFFFFF,
+} MMAL_STEREOSCOPIC_MODE_T;
+ */
+
+enumize!{StereoMode, 
+    None => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_NONE,
+    SideBySide => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_SIDE_BY_SIDE,
+    TopBottom => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_TOP_BOTTOM,
+    Max => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_MAX
+}
+
+impl Default for StereoModeInnerType {
+    fn default() -> Self {
+        Self { inner: mmal_param_init!(MMAL_PARAMETER_STEREOSCOPIC_MODE_T, MMAL_PARAMETER_STEREOSCOPIC_MODE) }
+    }
+}
+
+impl StereoModeInnerType {
+    pub fn set(&mut self, mode: StereoMode, decimate: bool, swap_eyes: bool) {
+        self.inner.mode = mode as u32;
+        self.inner.decimate = bool_rust_to_mmal(decimate) as i32; 
+        self.inner.swap_eyes = bool_rust_to_mmal(swap_eyes) as i32;
+    }
+
+    pub fn new(mode: StereoMode, decimate: bool, swap_eyes: bool) -> Self {
+        let mut rv = Self::default();
+        rv.set(mode, decimate, swap_eyes);
+        rv
+    }
+}
+
+impl InnerParamType for StereoModeInnerType {
+    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
+    }
+
+    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
+    }
+
+    fn name() -> &'static str { "StereoModeInnerType" }
+}
+
+impl Apply<(StereoMode, bool, bool)> for StereoModeInnerType {
+    fn apply(&mut self, (mode, decimate, swap_eyes): (StereoMode, bool, bool)) {
+        self.set(mode, decimate, swap_eyes);
+    }
+}
+
+impl TryInto<(StereoMode, bool, bool)> for &'_ StereoModeInnerType {
+    type Error = MmalError;
+    fn try_into(self) -> Result<(StereoMode, bool, bool)> {
+        Ok((
+            self.inner.mode.try_into()?,
+            bool_mmal_to_rust(self.inner.decimate as u32), 
+            bool_mmal_to_rust(self.inner.swap_eyes as u32)
+        ))
+    }
+}
+
+
+/// stereo mode
+pub type PStereoModePreview = Param<CameraPreviewPort, StereoModeInnerType>;
+/// stereo mode
+pub type PStereoModeVideo = Param<CameraVideoPort, StereoModeInnerType>;
+/// stereo mode
+pub type PStereoModeCapture = Param<CameraCapturePort, StereoModeInnerType>;

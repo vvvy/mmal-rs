@@ -41,7 +41,7 @@ pub fn service() -> Result<()> {
 
 
     let camera_num = PCameraNum::from(0);
-    let camera_config = PCameraConfig::from_update(CameraConfig::from_instance_info(&selected_camera));
+    let camera_config = PCameraConfig::from(CameraConfig::from_instance_info(&selected_camera));
     let camera_shutter_speed = PShutterSpeed::from(100_000);
             /*
             saturation: 50,

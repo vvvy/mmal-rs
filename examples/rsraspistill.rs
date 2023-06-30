@@ -40,7 +40,7 @@ impl StillCamera {
     fn create_camera(selected_camera: &CameraInstanceInfo) -> Result<ComponentEnabler<CameraEntity>> {
         let camera = CameraComponentHandle::create()?;
         let camera_num = PCameraNum::from(0);
-        let camera_config = PCameraConfig::from_update(CameraConfig::from_instance_info(selected_camera));
+        let camera_config = PCameraConfig::from(CameraConfig::from_instance_info(selected_camera));
         let camera_shutter_speed = PShutterSpeed::from(100_000);
                 /*
                 saturation: 50,
@@ -127,7 +127,7 @@ impl VideoCamera {
         let camera_num = PCameraNum::from(0);
         let mut ccfg = CameraConfig::from_instance_info(&selected_camera); 
         ccfg.one_shot_stills = false;
-        let camera_config = PCameraConfig::from_update(ccfg);
+        let camera_config = PCameraConfig::from(ccfg);
                 /*
                 saturation: 50,
                 sharpness: 50,
