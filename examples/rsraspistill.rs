@@ -50,8 +50,15 @@ impl StillCamera {
                 exposure_compensation: None,
                 shutter_speed: 100_000
              */
+        let mut annotate = Annotate::default();
+        annotate.show_analog_gain = true;
+        annotate.show_caf = true;
+        annotate.show_shutter = true;
+        annotate.text = "VyborCam".into();
+        let annotate_p = PAnnotate::from(&annotate);
+
         CameraControlPort::write_multi(&camera, 
-            param_iter![&camera_num, &camera_config, &camera_shutter_speed])?;    
+            param_iter![&camera_num, &camera_config, &camera_shutter_speed, &annotate_p])?;    
         CameraCapturePort::configure(&camera, CAMERA_PORT_CONFIG_320X240)?;
         ComponentEnabler::new(camera)
     }

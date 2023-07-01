@@ -342,13 +342,15 @@ impl InnerParamType for CameraConfigInnerType {
     }
 }
 
+pub fn bool_rust_to_mmal_u32(w: bool) -> u32 { if w { ffi::MMAL_TRUE } else { ffi::MMAL_FALSE } }
+pub fn bool_mmal_u32_to_rust(w: u32) -> bool { w != ffi::MMAL_FALSE }
 
-pub fn bool_rust_to_mmal(w: bool) -> u32 { if w { ffi::MMAL_TRUE } else { ffi::MMAL_FALSE } }
-pub fn bool_mmal_to_rust(w: u32) -> bool { w != ffi::MMAL_FALSE }
+pub fn bool_rust_to_mmal(w: bool) -> i32 { (if w { ffi::MMAL_TRUE } else { ffi::MMAL_FALSE }) as i32 }
+pub fn bool_mmal_to_rust(w: i32) -> bool { w != (ffi::MMAL_FALSE as i32) }
 
 impl Apply<CameraConfig> for CameraConfigInnerType {
     fn apply(&mut self, source: CameraConfig) {
-        let cbool = bool_rust_to_mmal;
+        let cbool = bool_rust_to_mmal_u32;
         let mut cfg = &mut self.inner;
         cfg.max_stills_w = source.max_stills_w;
         cfg.max_stills_h = source.max_stills_h;
@@ -365,7 +367,7 @@ impl Apply<CameraConfig> for CameraConfigInnerType {
 
 impl From<&CameraConfigInnerType> for CameraConfig {
     fn from(value: &CameraConfigInnerType) -> Self {
-        let cbool = bool_mmal_to_rust;
+        let cbool = bool_mmal_u32_to_rust;
         Self {
             max_stills_w: value.inner.max_stills_w,
             max_stills_h: value.inner.max_stills_h,
@@ -494,9 +496,10 @@ enumize!{AwbMode,
     Shade => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_SHADE, 
     Tungsten => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_TUNGSTEN, 
     Fluorescent => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_FLUORESCENT, 
-    Incadescent => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_INCANDESCENT, 
+    Incandescent => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_INCANDESCENT, 
     Flash => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_FLASH, 
-    Horizon => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_HORIZON
+    Horizon => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_HORIZON,
+    GreyWorld => MMAL_PARAM_AWBMODE_T_MMAL_PARAM_AWBMODE_GREYWORLD
 }
 enumerated_inner_type!{AwbModeInnerType, AwbMode, MMAL_PARAMETER_AWBMODE_T, MMAL_PARAMETER_AWB_MODE}
 idp!{MMAL_PARAMETER_AWB_MODE}
@@ -522,6 +525,9 @@ pub struct AwbGainsInnerType {
     inner: ffi::MMAL_PARAMETER_AWB_GAINS_T,
 }
 
+impl_inner_param_default!{AwbGainsInnerType, MMAL_PARAMETER_AWB_GAINS_T, MMAL_PARAMETER_CUSTOM_AWB_GAINS}
+impl_inner_param_type!{AwbGainsInnerType}
+
 impl AwbGainsInnerType {
     pub fn set(&mut self, r_gain: f64, b_gain: f64) {
         const C: i32 = 0x1_0000;
@@ -537,27 +543,6 @@ impl AwbGainsInnerType {
         rv.set(r_gain, b_gain);
         rv
     }
-}
-
-impl Default for AwbGainsInnerType {
-    fn default() -> Self { 
-        let mut cfg: ffi::MMAL_PARAMETER_AWB_GAINS_T = unsafe { mem::zeroed() };
-        cfg.hdr.id = ffi::MMAL_PARAMETER_CUSTOM_AWB_GAINS as u32;
-        cfg.hdr.size = mem::size_of::<ffi::MMAL_PARAMETER_AWB_GAINS_T>() as u32;
-        Self { inner: cfg }
-    }
-}
-
-impl InnerParamType for AwbGainsInnerType {
-    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
-    }
-
-    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
-    }
-
-    fn name() -> &'static str { "AwbGainsInnerType" }
 }
 
 impl Apply<(f64, f64)> for AwbGainsInnerType {
@@ -638,9 +623,12 @@ pub struct ColourFxInnerType {
     inner: ffi::MMAL_PARAMETER_COLOURFX_T,
 }
 
+impl_inner_param_default!{ColourFxInnerType, MMAL_PARAMETER_COLOURFX_T, MMAL_PARAMETER_COLOUR_EFFECT}
+impl_inner_param_type!{ColourFxInnerType}
+
 impl ColourFxInnerType {
     pub fn set(&mut self, enable: bool, u: u32, v: u32) {
-        self.inner.enable = bool_rust_to_mmal(enable) as i32;
+        self.inner.enable = bool_rust_to_mmal(enable);
         self.inner.u = u; 
         self.inner.v = v;
     }
@@ -652,27 +640,6 @@ impl ColourFxInnerType {
     }
 }
 
-impl Default for ColourFxInnerType {
-    fn default() -> Self { 
-        let mut cfg: ffi::MMAL_PARAMETER_COLOURFX_T = unsafe { mem::zeroed() };
-        cfg.hdr.id = ffi::MMAL_PARAMETER_COLOUR_EFFECT as u32;
-        cfg.hdr.size = mem::size_of::<ffi::MMAL_PARAMETER_COLOURFX_T>() as u32;
-        Self { inner: cfg }
-    }
-}
-
-impl InnerParamType for ColourFxInnerType {
-    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
-    }
-
-    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
-    }
-
-    fn name() -> &'static str { "ColourFxInnerType" }
-}
-
 impl Apply<(bool, u32, u32)> for ColourFxInnerType {
     fn apply(&mut self, (enable, u, v): (bool, u32, u32)) {
         self.set(enable, u, v);
@@ -681,7 +648,7 @@ impl Apply<(bool, u32, u32)> for ColourFxInnerType {
 
 impl Into<(bool, u32, u32)> for &'_ ColourFxInnerType {
     fn into(self) -> (bool, u32, u32) {
-        (bool_mmal_to_rust(self.inner.enable as u32), self.inner.u, self.inner.v)
+        (bool_mmal_to_rust(self.inner.enable), self.inner.u, self.inner.v)
     }
 }
 
@@ -727,6 +694,9 @@ pub struct CropInnerType {
     inner: ffi::MMAL_PARAMETER_INPUT_CROP_T,
 }
 
+impl_inner_param_default!{CropInnerType, MMAL_PARAMETER_INPUT_CROP_T, MMAL_PARAMETER_INPUT_CROP}
+impl_inner_param_type!{CropInnerType}
+
 impl CropInnerType {
     pub fn set(&mut self, (x, width): (i32, i32), (y, height): (i32, i32)) {
         self.inner.rect.x = x;
@@ -740,27 +710,6 @@ impl CropInnerType {
         rv.set(xw, yh);
         rv
     }
-}
-
-impl Default for CropInnerType {
-    fn default() -> Self { 
-        let mut cfg: ffi::MMAL_PARAMETER_INPUT_CROP_T = unsafe { mem::zeroed() };
-        cfg.hdr.id = ffi::MMAL_PARAMETER_INPUT_CROP as u32;
-        cfg.hdr.size = mem::size_of::<ffi::MMAL_PARAMETER_INPUT_CROP_T>() as u32;
-        Self { inner: cfg }
-    }
-}
-
-impl InnerParamType for CropInnerType {
-    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
-    }
-
-    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
-    }
-
-    fn name() -> &'static str { "ColourFxInnerType" }
 }
 
 impl Apply<((i32, i32), (i32, i32))> for CropInnerType {
@@ -801,15 +750,6 @@ pub struct StereoModeInnerType {
     inner: ffi::MMAL_PARAMETER_STEREOSCOPIC_MODE_T,
 }
 
-/*
-typedef enum MMAL_STEREOSCOPIC_MODE_T {
-   MMAL_STEREOSCOPIC_MODE_NONE = 0,
-   MMAL_STEREOSCOPIC_MODE_SIDE_BY_SIDE = 1,
-   MMAL_STEREOSCOPIC_MODE_TOP_BOTTOM = 2,
-   MMAL_STEREOSCOPIC_MODE_MAX = 0x7FFFFFFF,
-} MMAL_STEREOSCOPIC_MODE_T;
- */
-
 enumize!{StereoMode, 
     None => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_NONE,
     SideBySide => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_SIDE_BY_SIDE,
@@ -817,17 +757,14 @@ enumize!{StereoMode,
     Max => MMAL_STEREOSCOPIC_MODE_T_MMAL_STEREOSCOPIC_MODE_MAX
 }
 
-impl Default for StereoModeInnerType {
-    fn default() -> Self {
-        Self { inner: mmal_param_init!(MMAL_PARAMETER_STEREOSCOPIC_MODE_T, MMAL_PARAMETER_STEREOSCOPIC_MODE) }
-    }
-}
+impl_inner_param_default!{StereoModeInnerType, MMAL_PARAMETER_STEREOSCOPIC_MODE_T, MMAL_PARAMETER_STEREOSCOPIC_MODE}
+impl_inner_param_type!{StereoModeInnerType}
 
 impl StereoModeInnerType {
     pub fn set(&mut self, mode: StereoMode, decimate: bool, swap_eyes: bool) {
         self.inner.mode = mode as u32;
-        self.inner.decimate = bool_rust_to_mmal(decimate) as i32; 
-        self.inner.swap_eyes = bool_rust_to_mmal(swap_eyes) as i32;
+        self.inner.decimate = bool_rust_to_mmal(decimate); 
+        self.inner.swap_eyes = bool_rust_to_mmal(swap_eyes);
     }
 
     pub fn new(mode: StereoMode, decimate: bool, swap_eyes: bool) -> Self {
@@ -835,18 +772,6 @@ impl StereoModeInnerType {
         rv.set(mode, decimate, swap_eyes);
         rv
     }
-}
-
-impl InnerParamType for StereoModeInnerType {
-    unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
-    }
-
-    unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
-        ffi::mmal_port_parameter_set(port, &self.inner.hdr)
-    }
-
-    fn name() -> &'static str { "StereoModeInnerType" }
 }
 
 impl Apply<(StereoMode, bool, bool)> for StereoModeInnerType {
@@ -860,8 +785,8 @@ impl TryInto<(StereoMode, bool, bool)> for &'_ StereoModeInnerType {
     fn try_into(self) -> Result<(StereoMode, bool, bool)> {
         Ok((
             self.inner.mode.try_into()?,
-            bool_mmal_to_rust(self.inner.decimate as u32), 
-            bool_mmal_to_rust(self.inner.swap_eyes as u32)
+            bool_mmal_to_rust(self.inner.decimate), 
+            bool_mmal_to_rust(self.inner.swap_eyes)
         ))
     }
 }
@@ -873,3 +798,131 @@ pub type PStereoModePreview = Param<CameraPreviewPort, StereoModeInnerType>;
 pub type PStereoModeVideo = Param<CameraVideoPort, StereoModeInnerType>;
 /// stereo mode
 pub type PStereoModeCapture = Param<CameraCapturePort, StereoModeInnerType>;
+
+
+idp!{MMAL_PARAMETER_VIDEO_STABILISATION}
+/// Set the video stabilisation flag. Only used in video mode
+pub type PVideoStabilization = Param<CameraControlPort, Boolean<MMAL_PARAMETER_VIDEO_STABILISATION>>;
+
+enumize!{FlickerAvoid, 
+    Off => MMAL_PARAM_FLICKERAVOID_T_MMAL_PARAM_FLICKERAVOID_OFF,
+    Auto => MMAL_PARAM_FLICKERAVOID_T_MMAL_PARAM_FLICKERAVOID_AUTO,
+    Hz50 => MMAL_PARAM_FLICKERAVOID_T_MMAL_PARAM_FLICKERAVOID_50HZ,
+    Hz60 => MMAL_PARAM_FLICKERAVOID_T_MMAL_PARAM_FLICKERAVOID_60HZ
+}
+enumerated_inner_type!{FlickerAvoidInnerType, FlickerAvoid, MMAL_PARAMETER_FLICKERAVOID_T, MMAL_PARAMETER_FLICKER_AVOID}
+idp!{MMAL_PARAMETER_FLICKER_AVOID}
+/// Set flicker avoid mode for images
+/// * MMAL_PARAM_FLICKERAVOID_OFF
+/// * MMAL_PARAM_FLICKERAVOID_AUTO
+/// * MMAL_PARAM_FLICKERAVOID_50HZ
+/// * MMAL_PARAM_FLICKERAVOID_60HZ
+pub type PFlickerAvoid = Param<CameraControlPort, FlickerAvoidInnerType>;
+
+idp!{MMAL_PARAMETER_ANALOG_GAIN}
+/// Set analog gain (?)
+pub type PAnalogGain = Param<CameraControlPort, Rational<MMAL_PARAMETER_ANALOG_GAIN>>;
+
+idp!{MMAL_PARAMETER_DIGITAL_GAIN}
+/// Set digital gain (?)
+pub type PDigitalGain = Param<CameraControlPort, Rational<MMAL_PARAMETER_DIGITAL_GAIN>>;
+
+idp!{MMAL_PARAMETER_DRAW_BOX_FACES_AND_FOCUS}
+/// Set focus window on/off gain (?)
+pub type PFocusWindow = Param<CameraControlPort, Boolean<MMAL_PARAMETER_DRAW_BOX_FACES_AND_FOCUS>>;
+
+
+pub struct Annotate {
+    pub enable: bool,
+    pub show_shutter: bool,
+    pub show_analog_gain: bool,
+    pub show_lens: bool,
+    pub show_caf: bool,
+    pub show_motion: bool,
+    pub show_frame_num: bool,
+    pub enable_text_background: bool,
+    pub custom_background_colour: bool,
+    pub custom_background_y: u8,
+    pub custom_background_u: u8,
+    pub custom_background_v: u8,
+    pub custom_text_colour: bool,
+    pub custom_text_y: u8,
+    pub custom_text_u: u8,
+    pub custom_text_v: u8,
+    pub text_size: u8,
+    pub text: String,
+    /// 0=centre, 1=left, 2=right
+    pub justify: u32,
+    /// Offset from the justification edge, x
+    pub x_offset: u32,
+    /// Offset from the justification edge, y
+    pub y_offset: u32,
+}
+
+
+impl Default for Annotate {
+    fn default() -> Self {
+        Self { 
+            enable: Default::default(), show_shutter: Default::default(), show_analog_gain: Default::default(), 
+            show_lens: Default::default(), show_caf: Default::default(), show_motion: Default::default(), 
+            show_frame_num: Default::default(), enable_text_background: Default::default(), 
+            custom_background_colour: Default::default(), custom_background_y: Default::default(), 
+            custom_background_u: Default::default(), custom_background_v: Default::default(), 
+            custom_text_colour: Default::default(), custom_text_y: Default::default(), custom_text_u: Default::default(), 
+            custom_text_v: Default::default(), text_size: Default::default(), text: Default::default(), 
+            justify: Default::default(), x_offset: Default::default(), y_offset: Default::default() }
+    }
+}
+
+
+pub struct AnnotateInnerType {
+    inner: ffi::MMAL_PARAMETER_CAMERA_ANNOTATE_V4_T,
+}
+
+impl_inner_param_default!{AnnotateInnerType, MMAL_PARAMETER_CAMERA_ANNOTATE_V4_T, MMAL_PARAMETER_ANNOTATE}
+impl_inner_param_type!{AnnotateInnerType}
+
+
+impl AnnotateInnerType {
+    pub fn new() -> Self { Self::default() }
+}
+
+impl Apply<&Annotate> for AnnotateInnerType {
+    fn apply(&mut self, w: &Annotate) {
+        use std::ffi::CString;
+
+        self.inner.enable = bool_rust_to_mmal(w.enable);
+        self.inner.show_shutter = bool_rust_to_mmal(w.show_shutter);
+        self.inner.show_analog_gain = bool_rust_to_mmal(w.show_analog_gain);
+        self.inner.show_lens = bool_rust_to_mmal(w.show_lens);
+        self.inner.show_caf = bool_rust_to_mmal(w.show_caf);
+        self.inner.show_motion = bool_rust_to_mmal(w.show_motion);
+        self.inner.show_frame_num = bool_rust_to_mmal(w.show_frame_num);
+        self.inner.enable_text_background = bool_rust_to_mmal(w.enable_text_background);
+        self.inner.custom_background_colour = bool_rust_to_mmal(w.custom_background_colour);
+        self.inner.custom_background_Y = w.custom_background_y;
+        self.inner.custom_background_U = w.custom_background_u;
+        self.inner.custom_background_V = w.custom_background_v;
+        self.inner.custom_text_colour = bool_rust_to_mmal(w.custom_text_colour);
+        self.inner.custom_text_Y = w.custom_text_y;
+        self.inner.custom_text_U = w.custom_text_u;
+        self.inner.custom_text_V = w.custom_text_v;
+        self.inner.text_size = w.text_size;
+        
+        let sz = (ffi::MMAL_CAMERA_ANNOTATE_MAX_TEXT_LEN_V4 as usize).min(self.inner.text.len());
+        let t =  CString::new(w.text.as_bytes()).unwrap_or_default();
+        let t = if t.as_bytes_with_nul().len() <= sz { t } else { CString::default() };
+        unsafe {
+            let src = t.as_bytes_with_nul();
+            self.inner.text[0..src.len()].copy_from_slice(std::mem::transmute(src));
+        }
+        
+        self.inner.justify = w.justify;
+        self.inner.x_offset = w.x_offset;
+        self.inner.y_offset = w.y_offset;
+        
+    }
+}
+
+/// Set the annotate data
+pub type PAnnotate = Param<CameraControlPort, AnnotateInnerType>;

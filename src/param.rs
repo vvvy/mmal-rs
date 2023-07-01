@@ -121,6 +121,7 @@ macro_rules! idp {
 #[macro_export]
 macro_rules! enumize {
     ($enumid:ident, $($int:ident => $ext:ident),+) => {
+        #[allow(non_camel_case_types)]
         #[repr(u32)]
         pub enum $enumid { $($int = ffi::$ext),+ }
         impl TryFrom<u32> for $enumid {
@@ -128,7 +129,18 @@ macro_rules! enumize {
             fn try_from(value: u32) -> Result<Self> {
                 match value {
                     $(ffi::$ext => Ok($enumid::$int),)+
-                    other => Err(MmalError::new(Cause::InvalidEnumValue, format!("Invalid value {} for {}", other, stringify!($enumid))))
+                    w => Err(MmalError::new(Cause::InvalidEnumValue, format!("invalid binary value {} for `{}`", w, stringify!($enumid))))
+                }
+            }
+        }
+        impl std::str::FromStr for $enumid {
+            type Err = MmalError;
+
+            // Required method
+            fn from_str(s: &str) -> Result<Self> {
+                match s {
+                    $(stringify!($int) => Ok($enumid::$int),)+
+                    w => Err(MmalError::new(Cause::InvalidEnumValue, format!("invalid string value `{}` for `{}`", w, stringify!($enumid))))
                 }
             }
         }
@@ -192,6 +204,37 @@ macro_rules! mmal_param_init {
         cfg.hdr.size = mem::size_of::<ffi::$ty>() as u32;
         cfg
     } };
+}
+
+///Implements inner param
+#[macro_export]
+macro_rules! impl_inner_param_type {
+    ($ty:ident) => {
+        impl InnerParamType for $ty {
+            unsafe fn get_param(&mut self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+                ffi::mmal_port_parameter_get(port, &mut self.inner.hdr)
+            }
+        
+            unsafe fn set_param(&self, port: *mut ffi::MMAL_PORT_T) -> MmalStatus {
+                ffi::mmal_port_parameter_set(port, &self.inner.hdr)
+            }
+        
+            fn name() -> &'static str { stringify!($ty) }
+        }
+    };
+}
+
+
+///Implements Default for inner param
+#[macro_export]
+macro_rules! impl_inner_param_default {
+    ($ty:ident, $ffi_ty:ident, $ffi_id:ident) => {
+        impl Default for $ty {
+            fn default() -> Self { 
+                Self { inner: mmal_param_init!($ffi_ty, $ffi_id) }
+            }
+        }
+    }
 }
 
 
