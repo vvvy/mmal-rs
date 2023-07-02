@@ -651,8 +651,10 @@ impl<P: ComponentPort> SinkAggregate<P> {
     /// 
     /// Note that this is the only way to obtain buffer data.
     /// 
-    /// The consumer function shall return `Ok(true)` to indicate that the buffer has been consumed successfully,
-    /// `Ok(false)` to indicate that the fuffer shall be returned (ungot) to the queue, or `Err(_)` upon error.
+    /// The consumer closure `f` shall return `Ok((true, user_data))` to indicate that the buffer has been consumed successfully,
+    /// `Ok((false, user_data))` to indicate that the fuffer shall be returned (ungot) to the queue, or `Err(_)` upon error.
+    /// 
+    /// The method returns the return value of the consumer closure.
     pub fn consume<R>(&self, b: BufferRef, f: impl FnMut(FrameFlags, &[u8]) -> Result<(bool, R)>) -> Result<(bool, R)>  {
         let (is_consumed, user_data) = b.do_locked(f)?;
         if is_consumed {
@@ -674,9 +676,6 @@ impl<P: ComponentPort> SinkAggregate<P> {
     /// Get a buffer from the queue, if any
     pub fn get(&self) -> Option<BufferRef> { self.q.get() }
 }
-
-
-
 
 impl<P: ComponentPort> std::future::Future for SinkAggregate<P> {
     type Output = BufferRef;

@@ -4,14 +4,13 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust wrappers around MMAL C API"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 libc = "0.2"
 
 [dev-dependencies]
 log = "0.4"
 env_logger = "0.10"
+tokio = { version="1.28", features = ["rt", "sync", "macros", "net", "io-util"]}
 
 [build-dependencies]
 bindgen = { version = "0.66.1", optional = true }

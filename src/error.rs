@@ -45,29 +45,19 @@ impl Display for MmalError {
             Cause::CreateQueue => write!(f, "(create queue)")?,
             Cause::QueueEmpty => write!(f, "(queue empty)")?,
             Cause::GetPort => write!(f, "(get port)")?,
-            Cause::InvalidEnumValue => write!(f, "(invalid enum value")?,
-            
+            Cause::InvalidEnumValue => write!(f, "(invalid enum value)")?,
         }
         if !self.message.is_empty() {
             write!(f, ": {}", self.message())?
         }
         Ok(())
-
-        /*
-        if let Some(status_str) = self.status_str() {
-            write!(f, "[{}] {}", status_str, self.message)
-        } else {
-            write!(f, "{}", self.message)
-        }*/
     }
 }
-
 
 impl std::error::Error for MmalError { }
 
 type StdResult<T, E> = std::result::Result<T, E>;
 pub type Result<T> = StdResult<T, MmalError>;
-
 
 pub(crate) fn convert_status(status: MmalStatus, msg_f: impl FnOnce() -> String) -> Result<()> {
     if status == ffi::MMAL_STATUS_T::MMAL_SUCCESS {
